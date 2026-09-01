@@ -21,7 +21,8 @@ $apcu_file    = $plugin_dir . '/includes/system/class-apcu.php';
 
 function apcm_is_blacklisted_ajax_call() {
 	if ( wp_doing_ajax() ) {
-		if ( isset( $_POST['action'] ) && str_contains( $_POST['action'], 'wpmdb' ) && ! str_contains( $_POST['action'], 'flush' ) ) {
+		$action = isset( $_POST['action'] ) && is_string( $_POST['action'] ) ? $_POST['action'] : '';
+		if ( '' !== $action && str_contains( $action, 'wpmdb' ) && ! str_contains( $action, 'flush' ) ) {
 			return true;
 		}
 	}
