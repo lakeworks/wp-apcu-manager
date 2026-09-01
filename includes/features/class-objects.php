@@ -136,14 +136,17 @@ class Objects extends \WP_List_Table {
 		}
 		$this->process_args();
 		$this->process_action();
-		$time = time();
-		foreach ( APCu::get_all_cleaned_objects() as $object ) {
-			if ( 0 < $object['ttl'] && ( $object['timestamp'] + $object['ttl'] < $time ) ) {
-				$object['status'] = 0;
-			} else {
-				$object['status'] = 1;
+		$time    = time();
+		$objects = APCu::get_all_cleaned_objects();
+		if ( false !== $objects ) {
+			foreach ( $objects as $object ) {
+				if ( 0 < $object['ttl'] && ( $object['timestamp'] + $object['ttl'] < $time ) ) {
+					$object['status'] = 0;
+				} else {
+					$object['status'] = 1;
+				}
+				$this->objects[] = $object;
 			}
-			$this->objects[] = $object;
 		}
 		$this->plugins = apply_filters( 'perfopsone_plugin_info', [] );
 	}
@@ -639,7 +642,7 @@ class Objects extends \WP_List_Table {
 	 */
 	public function warning() {
 		$message = '';
-		if ( ! function_exists( 'apcu_cache_info' ) ) {
+		if ( ! APCu::is_operational() ) {
 			$message = esc_html__( 'APCu is not enabled on this site. There\'s nothing to see here.', 'apcu-manager' );
 		}
 		if ( '' !== $message ) {
@@ -673,7 +676,7 @@ class Objects extends \WP_List_Table {
 	 */
 	private function get_value( $item ) {
 		$result = '<p>' . esc_html__( 'Unable to fetch value…', 'apcu-manager' ) . '</p>';
-		if ( function_exists( 'apcu_fetch' ) ) {
+		if ( APCu::is_operational() ) {
 			$result = '<p>' . esc_html__( 'Object too large to be displayed…', 'apcu-manager' ) . '</p>';
 			if ( 1024 * Option::network_get( 'maxsize' ) > (int) $item['memory'] ) {
 				$found   = false;
@@ -813,19 +816,29 @@ class Objects extends \WP_List_Table {
 	 * @since 1.0.0
 	 */
 	public function process_action() {
+		$type = 'updated';
 		switch ( $this->action ) {
 			case 'reset':
-				APCu::reset();
-				$message = esc_html__( 'Cache clearing done.', 'apcu-manager' );
+				if ( APCu::reset() ) {
+					$message = esc_html__( 'Cache clearing done.', 'apcu-manager' );
+				} else {
+					$message = esc_html__( 'Cache clearing failed because APCu is unavailable.', 'apcu-manager' );
+					$type    = 'error';
+				}
 				break;
 			case 'invalidate':
-				// phpcs:ignore
-				$message = esc_html( sprintf( __( 'Deletion done: %d object(s).', 'apcu-manager' ), APCu::delete( $this->bulk ) ) );
+				if ( APCu::is_operational() ) {
+					// phpcs:ignore
+					$message = esc_html( sprintf( __( 'Deletion done: %d object(s).', 'apcu-manager' ), APCu::delete( $this->bulk ) ) );
+				} else {
+					$message = esc_html__( 'Deletion failed because APCu is unavailable.', 'apcu-manager' );
+					$type    = 'error';
+				}
 				break;
 			default:
 				return;
 		}
-		add_settings_error( 'apcu_manager_no_error', 0, $message, 'updated' );
+		add_settings_error( 'apcu_manager_no_error', 0, $message, $type );
 	}
 
 	/**

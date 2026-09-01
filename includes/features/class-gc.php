@@ -54,7 +54,7 @@ class GC {
 	 */
 	public static function do() {
 		$span = \DecaLog\Engine::tracesLogger( APCM_SLUG )->startSpan( 'Garbage collection', DECALOG_SPAN_MAIN_RUN );
-		if ( function_exists( 'apcu_cache_info' ) && function_exists( 'apcu_delete' ) ) {
+		if ( APCu::is_operational() ) {
 			try {
 				$infos    = apcu_cache_info(  false );
 				$cpt      = 0;
@@ -68,8 +68,9 @@ class GC {
 							foreach ( $prefixes as $prefix ) {
 								if ( 0 === strpos( $oid, $prefix ) && 0 !== (int) $object['ttl'] ) {
 									if ( $time > apcm_unix_ts( $object['mtime'] ) + $object['ttl'] ) {
-										apcu_delete( $object['info'] );
-										$cpt++;
+										if ( true === apcu_delete( $object['info'] ) ) {
+											$cpt++;
+										}
 										break;
 									}
 								}
@@ -81,7 +82,7 @@ class GC {
 					\DecaLog\Engine::eventsLogger( APCM_SLUG )->info( sprintf( '%d out of date object(s) deleted.', $cpt ) );
 				}
 			} catch ( \Throwable $e ) {
-				\DecaLog\Engine::eventsLogger( APCM_SLUG )->error( sprintf( 'Unable to query APCu status: %s.', $e->getMessage() ), [ 'code' => $e->getCode() ] );
+				\DecaLog\Engine::eventsLogger( APCM_SLUG )->error( sprintf( 'APCu garbage collection failed with %s at %s:%d.', get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
 			}
 		}
 		\DecaLog\Engine::tracesLogger( APCM_SLUG )->endSpan( $span );

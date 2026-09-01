@@ -507,7 +507,7 @@ class Apcu_Manager_Admin {
 	 * @since 1.0.0
 	 */
 	public function plugin_features_section_callback() {
-		$apcu_available = function_exists( 'apcu_delete' ) && function_exists( 'apcu_fetch' ) && function_exists( 'apcu_store' ) && function_exists( 'apcu_add' ) && function_exists( 'apcu_dec' ) && function_exists( 'apcu_inc' );
+		$apcu_available = APCu::is_operational();
 		if ( $apcu_available ) {
 			$note = sprintf( __( 'Note: %1$s is currently enabled on you %2$s.', 'apcu-manager' ), APCu::name(), Environment::is_wordpress_multisite() ? esc_html__( 'network', 'apcu-manager' ) : esc_html__( 'website', 'apcu-manager' ) );
 		} else {

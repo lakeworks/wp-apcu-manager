@@ -21,6 +21,7 @@ $handler_file = WP_PLUGIN_DIR . '/apcu-manager/includes/api/object-class.php';
 if ( ! file_exists( $handler_file ) ) {
 	$handler_file = __DIR__ . '/plugins/apcu-manager/includes/api/object-class.php';
 }
+$apcu_file = dirname( $handler_file, 2 ) . '/system/class-apcu.php';
 
 function apcm_is_blacklisted_ajax_call() {
 	if ( wp_doing_ajax() ) {
@@ -33,8 +34,9 @@ function apcm_is_blacklisted_ajax_call() {
 }
 
 
-if ( file_exists( $handler_file ) && ! apcm_is_blacklisted_ajax_call()) {
+if ( file_exists( $handler_file ) && file_exists( $apcu_file ) && ! apcm_is_blacklisted_ajax_call()) {
 
+	require_once $apcu_file;
 	require_once $handler_file;
 
 	if ( ! defined( 'APCM_BOOTSTRAPPED' ) ) {

@@ -62,30 +62,35 @@ class Capture {
 	/**
 	 * Get the items details.
 	 *
-	 * @return array    The details.
+	 * @return array|false The details, or false when APCu is unavailable.
 	 * @since 1.0.0
 	 */
 	public static function get_details() {
+		if ( ! APCu::is_operational() || ! class_exists( '\APCUIterator' ) ) {
+			return false;
+		}
 		$ids      = apply_filters( 'perfopsone_apcu_info', [ 'w3tc' => 'W3 Total Cache', 'wordpress' => 'WordPress' ] );
 		$schema   = new Schema();
 		$result   = [];
 		$details  = [];
 		$prefixes = APCu::get_prefixes();
-		if ( ! class_exists( '\APCUIterator' ) ) {
-			return $result;
-		}
-		foreach ( $ids as $k => $id ) {
-			foreach ( $prefixes as $prefix ) {
-				foreach ( new \APCUIterator( '/' . preg_quote( $k . $prefix, '/' ) . '/', APC_ITER_MEM_SIZE, APCU_ITERATOR_DETAIL_CHUNCK_SIZE, APC_LIST_ACTIVE ) as $object ) {
-					if ( array_key_exists( $k, $details ) ) {
-						$details[ $k ]['items'] = $details[ $k ]['items'] + 1;
-						$details[ $k ]['size']  = $details[ $k ]['size'] + (int) $object['mem_size'];
-					} else {
-						$details[ $k ]['items'] = 1;
-						$details[ $k ]['size']  = (int) $object['mem_size'];
+		try {
+			foreach ( $ids as $k => $id ) {
+				foreach ( $prefixes as $prefix ) {
+					foreach ( new \APCUIterator( '/' . preg_quote( $k . $prefix, '/' ) . '/', APC_ITER_MEM_SIZE, APCU_ITERATOR_DETAIL_CHUNCK_SIZE, APC_LIST_ACTIVE ) as $object ) {
+						if ( array_key_exists( $k, $details ) ) {
+							$details[ $k ]['items'] = $details[ $k ]['items'] + 1;
+							$details[ $k ]['size']  = $details[ $k ]['size'] + (int) $object['mem_size'];
+						} else {
+							$details[ $k ]['items'] = 1;
+							$details[ $k ]['size']  = (int) $object['mem_size'];
+						}
 					}
 				}
 			}
+		} catch ( \Throwable $e ) {
+			\DecaLog\Engine::eventsLogger( APCM_SLUG )->error( sprintf( 'APCu detail enumeration failed with %s at %s:%d.', get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
+			return false;
 		}
 		foreach ( $details as $key => $detail ) {
 			$d          = $schema->init_detail();
@@ -103,7 +108,7 @@ class Capture {
 	 * @since    2.4.0
 	 */
 	public static function metrics() {
-		if ( function_exists( 'apcu_cache_info' ) && function_exists( 'apcu_sma_info' ) ) {
+		if ( APCu::is_operational() ) {
 			$span     = \DecaLog\Engine::tracesLogger( APCM_SLUG )->startSpan( 'APCu metrics collation', DECALOG_SPAN_PLUGINS_LOAD );
 			$cache_id = 'metrics/lastcheck';
 			$metrics  = Cache::get_global( $cache_id );
@@ -112,6 +117,11 @@ class Capture {
 					$memory  = apcu_sma_info( false );
 					$value   = apcu_cache_info( true );
 					$metrics = [];
+					if ( ! is_array( $memory ) || ! is_array( $value ) ) {
+						\DecaLog\Engine::eventsLogger( APCM_SLUG )->warning( 'APCu metrics snapshot is unavailable.' );
+						\DecaLog\Engine::tracesLogger( APCM_SLUG )->endSpan( $span );
+						return false;
+					}
 					if ( is_array( $memory ) && array_key_exists( 'num_seg', $memory ) && array_key_exists( 'seg_size', $memory ) && array_key_exists( 'mem_size', $memory ) ) {
 						$mem_total = (int) ( $memory['num_seg'] * $memory['seg_size'] );
 						$mem_used  = (int) $memory['mem_size'];
@@ -171,7 +181,7 @@ class Capture {
 					\DecaLog\Engine::eventsLogger( APCM_SLUG )->debug( 'APCu is enabled. Statistics recorded.' );
 				} catch ( \Throwable $e ) {
 					$metrics = null;
-					\DecaLog\Engine::eventsLogger( APCM_SLUG )->error( sprintf( 'Unable to query APCu status: %s.', $e->getMessage() ), [ 'code' => $e->getCode() ] );
+					\DecaLog\Engine::eventsLogger( APCM_SLUG )->error( sprintf( 'APCu metrics failed with %s at %s:%d.', get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
 				}
 			}
 			if ( isset( $metrics ) ) {
@@ -193,8 +203,10 @@ class Capture {
 				}
 			}
 			\DecaLog\Engine::tracesLogger( APCM_SLUG )->endSpan( $span );
+			return isset( $metrics );
 		} else {
 			\DecaLog\Engine::eventsLogger( APCM_SLUG )->debug( 'APCu is disabled. No metrics to collate.' );
+			return false;
 		}
 	}
 
@@ -207,8 +219,12 @@ class Capture {
 		$schema = new Schema();
 		$record = $schema->init_record();
 		$time   = time();
-		if ( function_exists( 'apcu_cache_info' ) && function_exists( 'apcu_sma_info' ) ) {
+		if ( APCu::is_operational() ) {
 			$details  = self::get_details();
+			if ( false === $details ) {
+				\DecaLog\Engine::eventsLogger( APCM_SLUG )->warning( 'APCu analytics snapshot is unavailable.' );
+				return false;
+			}
 			$cache_id = 'data/lastcheck';
 			$old      = Cache::get_global( $cache_id );
 			if ( ! isset( $old ) ) {
@@ -225,6 +241,10 @@ class Capture {
 					$memory             = apcu_sma_info( false );
 					$value['raw']       = apcu_cache_info( true );
 					$value['timestamp'] = $time;
+					if ( ! is_array( $memory ) || ! is_array( $value['raw'] ) ) {
+						\DecaLog\Engine::eventsLogger( APCM_SLUG )->warning( 'APCu analytics snapshot is unavailable.' );
+						return false;
+					}
 					$record['status']   = 'enabled';
 					$record['delta']    = $time - $old['timestamp'];
 					if ( is_array( $memory ) && array_key_exists( 'num_seg', $memory ) && array_key_exists( 'seg_size', $memory ) ) {
@@ -268,7 +288,8 @@ class Capture {
 					$schema->write_statistics_record_to_database( $record, $details );
 					\DecaLog\Engine::eventsLogger( APCM_SLUG )->debug( 'APCu is enabled. Statistics recorded.' );
 				} catch ( \Throwable $e ) {
-					\DecaLog\Engine::eventsLogger( APCM_SLUG )->error( sprintf( 'Unable to query APCu status: %s.', $e->getMessage() ), [ 'code' => $e->getCode() ] );
+					\DecaLog\Engine::eventsLogger( APCM_SLUG )->error( sprintf( 'APCu analytics failed with %s at %s:%d.', get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
+					return false;
 				}
 			} elseif ( isset( $old ) && array_key_exists( 'timestamp', $old ) && ( 300 - self::$delta > $time - $old['timestamp'] ) ) {
 				// What to do when delta is less than 59 sec?
@@ -276,17 +297,24 @@ class Capture {
 				try {
 					$value['raw']       = apcu_cache_info( true );
 					$value['timestamp'] = $time;
+					if ( ! is_array( $value['raw'] ) ) {
+						\DecaLog\Engine::eventsLogger( APCM_SLUG )->warning( 'APCu analytics snapshot is unavailable.' );
+						return false;
+					}
 					Cache::set_global( $cache_id, $value, 'check' );
 					$record['status'] = 'recycle_in_progress';
 					$schema->write_statistics_record_to_database( $record, $details );
 					\DecaLog\Engine::eventsLogger( APCM_SLUG )->debug( 'APCu is enabled. Recovery cycle.' );
 				} catch ( \Throwable $e ) {
-					\DecaLog\Engine::eventsLogger( APCM_SLUG )->error( sprintf( 'Unable to query APCu status: %s.', $e->getMessage() ), [ 'code' => $e->getCode() ] );
+					\DecaLog\Engine::eventsLogger( APCM_SLUG )->error( sprintf( 'APCu analytics failed with %s at %s:%d.', get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
+					return false;
 				}
 			}
+			return true;
 		} else {
 			$schema->write_statistics_record_to_database( $record );
 			\DecaLog\Engine::eventsLogger( APCM_SLUG )->debug( 'APCu is disabled. No statistics to record.' );
+			return false;
 		}
 	}
 

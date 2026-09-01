@@ -119,7 +119,7 @@ class Cache {
 			define( 'APCU_CACHE_PREFIX', '_' . md5( ABSPATH ) . '_' );
 		}
 		self::$apcu_pool_prefix = APCU_CACHE_PREFIX;
-		self::$apcu_available = function_exists( 'apcu_delete' ) && function_exists( 'apcu_fetch' ) && function_exists( 'apcu_store' );
+		self::$apcu_available = APCu::is_operational();
 	}
 
 	/**
@@ -369,21 +369,21 @@ class Cache {
 	public static function delete_pool() {
 		$result = 0;
 		if ( self::$apcu_available ) {
-			if ( function_exists( 'apcu_cache_info' ) && function_exists( 'apcu_delete' ) ) {
-				try {
-					$infos = apcu_cache_info( false );
-					if ( is_array( $infos ) && array_key_exists( 'cache_list', $infos ) && is_array( $infos['cache_list'] ) ) {
-						foreach ( $infos['cache_list'] as $script ) {
-							if ( 0 === strpos( $script['info'], self::$pool_name . self::$apcu_pool_prefix ) ) {
-								apcu_delete( $script['info'] );
-								$result++;
-							}
+			try {
+				$infos = apcu_cache_info( false );
+				if ( ! is_array( $infos ) || ! array_key_exists( 'cache_list', $infos ) || ! is_array( $infos['cache_list'] ) ) {
+					return false;
+				}
+				if ( is_array( $infos['cache_list'] ) ) {
+					foreach ( $infos['cache_list'] as $script ) {
+						if ( 0 === strpos( $script['info'], self::$pool_name . self::$apcu_pool_prefix ) && true === apcu_delete( $script['info'] ) ) {
+							$result++;
 						}
 					}
-				} catch ( \Throwable $e ) {
-					\DecaLog\Engine::eventsLogger( APCM_SLUG )->error( sprintf( 'Unable to query APCu status: %s.', $e->getMessage() ), [ 'code' => $e->getCode() ] );
-					$result = 0;
 				}
+			} catch ( \Throwable $e ) {
+				\DecaLog\Engine::eventsLogger( APCM_SLUG )->error( sprintf( 'APCu pool deletion failed with %s at %s:%d.', get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
+				return false;
 			}
 		} elseif ( wp_using_ext_object_cache() ) {
 			$result = 0;
@@ -524,7 +524,7 @@ class Cache {
 					'value' => ini_get( 'apc.' . $key ),
 				];
 			}
-			if ( function_exists( 'apcu_sma_info' ) && function_exists( 'apcu_cache_info' ) ) {
+			if ( APCu::is_operational() ) {
 				$raw = apcu_sma_info();
 				if ( is_array( $raw ) ) {
 					foreach ( $raw as $key => $status ) {
