@@ -72,6 +72,7 @@ class Option {
 		self::$defaults['display_nag']       = false;
 		self::$defaults['nags']              = [];
 		self::$defaults['version']           = '0.0.0';
+		self::$defaults['schema_version']    = '0';
 		self::$defaults['last_check']        = [];
 		self::$defaults['history']           = 21;
 		self::$defaults['analytics']         = true;
@@ -82,7 +83,7 @@ class Option {
 		self::$defaults['adminbar']          = true;
 		self::$defaults['compat']            = true;
 		self::$defaults['maxsize']           = 100;
-		self::$network                       = [ 'forceearlyloading', 'earlyloading', 'compat', 'version', 'use_cdn', 'use_apcu',  'script_in_footer', 'display_nag', 'analytics', 'history', 'gc', 'metrics', 'adminbar' ];
+		self::$network                       = [ 'forceearlyloading', 'earlyloading', 'compat', 'version', 'schema_version', 'use_cdn', 'use_apcu',  'script_in_footer', 'display_nag', 'analytics', 'history', 'gc', 'metrics', 'adminbar' ];
 	}
 	/**
 	 * Get the options infos for Site Health "info" tab.
@@ -236,7 +237,7 @@ class Option {
 	 */
 	public static function reset_to_defaults() {
 		foreach ( self::$network as $key ) {
-			if ( 'version' !== $key ) {
+			if ( ! in_array( $key, [ 'version', 'schema_version' ], true ) ) {
 				self::network_set( $key, self::$defaults[ $key ] );
 			}
 		}

@@ -30,6 +30,14 @@ use APCuManager\System\Cache;
 class Schema {
 
 	/**
+	 * Current analytics schema version.
+	 *
+	 * @since 4.6.2
+	 * @var string
+	 */
+	private const VERSION = '2';
+
+	/**
 	 * Statistics table name.
 	 *
 	 * @since  1.0.0
@@ -101,15 +109,8 @@ class Schema {
 	 * @since    1.0.0
 	 */
 	public function initialize() {
-		global $wpdb;
-		try {
-			$this->create_tables();
-			\DecaLog\Engine::eventsLogger( APCM_SLUG )->debug( sprintf( 'Table "%s" created.', $wpdb->base_prefix . self::$statistics ) );
-			\DecaLog\Engine::eventsLogger( APCM_SLUG )->debug( sprintf( 'Table "%s" created.', $wpdb->base_prefix . self::$details ) );
+		if ( $this->run_migration() ) {
 			\DecaLog\Engine::eventsLogger( APCM_SLUG )->info( 'Schema installed.' );
-		} catch ( \Throwable $e ) {
-			\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( sprintf( 'Unable to create "%s" and/or "%s" table: %s', $wpdb->base_prefix . self::$statistics, $wpdb->base_prefix . self::$details, $e->getMessage() ), $e->getCode() );
-			\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( 'Schema not installed.', [ 'code' => $e->getCode() ] );
 		}
 	}
 
@@ -137,14 +138,51 @@ class Schema {
 	 * @since    1.0.0
 	 */
 	public function update() {
-		global $wpdb;
+		return self::maybe_migrate();
+	}
+
+	/**
+	 * Run a pending schema migration from an admin or upgrader context.
+	 *
+	 * @param mixed $upgrader Optional upgrader instance.
+	 * @param array $options Optional upgrader hook data.
+	 * @return bool True when the schema is current, false otherwise.
+	 * @since 4.6.2
+	 */
+	public static function maybe_migrate( $upgrader = null, $options = [] ) {
+		$is_upgrade = is_array( $options ) && isset( $options['action'], $options['type'] ) && in_array( $options['action'], [ 'install', 'update' ], true ) && 'plugin' === $options['type'];
+		if ( ! is_admin() && ! $is_upgrade ) {
+			return false;
+		}
+		if ( version_compare( (string) Option::network_get( 'schema_version' ), self::VERSION, '>=' ) ) {
+			return true;
+		}
+		$schema = new self();
+		return $schema->run_migration();
+	}
+
+	/**
+	 * Create or migrate the analytics schema.
+	 *
+	 * @return bool True when the schema version was stored, false otherwise.
+	 * @since 4.6.2
+	 */
+	private function run_migration() {
 		try {
 			$this->create_tables();
-			\DecaLog\Engine::eventsLogger( APCM_SLUG )->debug( sprintf( 'Table "%s" updated.', $wpdb->base_prefix . self::$statistics ) );
-			\DecaLog\Engine::eventsLogger( APCM_SLUG )->debug( sprintf( 'Table "%s" updated.', $wpdb->base_prefix . self::$details ) );
+			if ( ! $this->migrate_existing_tables() ) {
+				return false;
+			}
+			Option::network_set( 'schema_version', self::VERSION );
+			if ( self::VERSION !== (string) Option::network_get( 'schema_version' ) ) {
+				\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( 'Schema migration failed while storing its version.' );
+				return false;
+			}
 			\DecaLog\Engine::eventsLogger( APCM_SLUG )->info( 'Schema updated.' );
+			return true;
 		} catch ( \Throwable $e ) {
-			\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( sprintf( 'Unable to update "%s" and/or "%s" table: %s', $wpdb->base_prefix . self::$statistics, $wpdb->base_prefix . self::$details, $e->getMessage() ), $e->getCode() );
+			\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( sprintf( 'Schema migration failed with %s at %s:%d.', get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
+			return false;
 		}
 	}
 
@@ -183,7 +221,7 @@ class Schema {
 		global $wpdb;
 		$charset_collate = 'DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci';
 		$sql             = 'CREATE TABLE IF NOT EXISTS ' . $wpdb->base_prefix . self::$statistics;
-		$sql            .= " (`timestamp` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',";
+		$sql            .= ' (`timestamp` datetime NOT NULL,';
 		$sql            .= " `delta` int(11) UNSIGNED NOT NULL DEFAULT '0',";
 		$sql            .= " `status` enum('" . implode( "','", APCu::$status ) . "') NOT NULL DEFAULT 'disabled',";
 		$sql            .= " `mem_total` int(11) UNSIGNED NOT NULL DEFAULT '0',";
@@ -198,18 +236,132 @@ class Schema {
 		$sql            .= " `ins` int(11) UNSIGNED NOT NULL DEFAULT '0',";
 		$sql            .= " PRIMARY KEY (`timestamp`)";
 		$sql            .= ") $charset_collate;";
-		// phpcs:ignore
-		$wpdb->query( $sql );
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table names are plugin-owned constants.
+		if ( false === $wpdb->query( $sql ) ) {
+			throw new \RuntimeException( 'Statistics table creation failed.' );
+		}
 		$charset_collate = 'DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci';
 		$sql             = 'CREATE TABLE IF NOT EXISTS ' . $wpdb->base_prefix . self::$details;
-		$sql            .= " (`timestamp` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',";
+		$sql            .= ' (`timestamp` datetime NOT NULL,';
 		$sql            .= " `id` varchar(100) NOT NULL DEFAULT '-',";
 		$sql            .= " `items` int(11) UNSIGNED NOT NULL DEFAULT '0',";
 		$sql            .= " `size` int(11) UNSIGNED NOT NULL DEFAULT '0',";
-		$sql            .= ' UNIQUE KEY u_stat (timestamp, id)';
+		$sql            .= ' PRIMARY KEY (`timestamp`, `id`)';
 		$sql            .= ") $charset_collate;";
-		// phpcs:ignore
-		$wpdb->query( $sql );
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table names are plugin-owned constants.
+		if ( false === $wpdb->query( $sql ) ) {
+			throw new \RuntimeException( 'Details table creation failed.' );
+		}
+	}
+
+	/**
+	 * Migrate existing analytics tables to the current schema.
+	 *
+	 * @return bool True on success, false on a checked database failure.
+	 * @since 4.6.2
+	 */
+	private function migrate_existing_tables() {
+		global $wpdb;
+		$statistics = $wpdb->base_prefix . self::$statistics;
+		$details    = $wpdb->base_prefix . self::$details;
+		$sql        = 'ALTER TABLE `' . $statistics . '` MODIFY `timestamp` datetime NOT NULL';
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table name is a plugin-owned constant.
+		if ( false === $wpdb->query( $sql ) ) {
+			return $this->migration_failed( 'statistics timestamp migration' );
+		}
+		$sql = 'ALTER TABLE `' . $details . '` MODIFY `timestamp` datetime NOT NULL';
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table name is a plugin-owned constant.
+		if ( false === $wpdb->query( $sql ) ) {
+			return $this->migration_failed( 'details timestamp migration' );
+		}
+		return $this->migrate_details_primary_key( $details );
+	}
+
+	/**
+	 * Add the composite details primary key after resolving duplicate rows.
+	 *
+	 * @param string $table Fully prefixed details table name.
+	 * @return bool True on success, false on a checked database failure.
+	 * @since 4.6.2
+	 */
+	private function migrate_details_primary_key( $table ) {
+		global $wpdb;
+		$sql = 'SHOW KEYS FROM `' . $table . '`';
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table name is a plugin-owned constant.
+		$indexes = $wpdb->get_results( $sql, ARRAY_A );
+		if ( ! is_array( $indexes ) ) {
+			return $this->migration_failed( 'details index inspection' );
+		}
+		$primary_columns = [];
+		$has_legacy_key  = false;
+		foreach ( $indexes as $index ) {
+			if ( isset( $index['Key_name'] ) && 'PRIMARY' === $index['Key_name'] && isset( $index['Seq_in_index'], $index['Column_name'] ) ) {
+				$primary_columns[ (int) $index['Seq_in_index'] ] = $index['Column_name'];
+			}
+			if ( isset( $index['Key_name'] ) && 'u_stat' === $index['Key_name'] ) {
+				$has_legacy_key = true;
+			}
+		}
+		ksort( $primary_columns );
+		$primary_columns = array_values( $primary_columns );
+		if ( [ 'timestamp', 'id' ] === $primary_columns ) {
+			if ( $has_legacy_key ) {
+				$sql = 'ALTER TABLE `' . $table . '` DROP INDEX `u_stat`';
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and index names are fixed.
+				if ( false === $wpdb->query( $sql ) ) {
+					return $this->migration_failed( 'legacy details index removal' );
+				}
+			}
+			return true;
+		}
+
+		$sql = 'SELECT `timestamp`, `id`, COUNT(*) AS `duplicate_count` FROM `' . $table . '` GROUP BY `timestamp`, `id` HAVING COUNT(*) > 1';
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table name is a plugin-owned constant.
+		$duplicates = $wpdb->get_results( $sql, ARRAY_A );
+		if ( ! is_array( $duplicates ) ) {
+			return $this->migration_failed( 'details duplicate inspection' );
+		}
+		foreach ( $duplicates as $duplicate ) {
+			$delete_count = (int) $duplicate['duplicate_count'] - 1;
+			if ( 0 < $delete_count ) {
+				$sql = $wpdb->prepare( 'DELETE FROM `' . $table . '` WHERE `timestamp` = %s AND `id` = %s LIMIT %d', $duplicate['timestamp'], $duplicate['id'], $delete_count );
+				if ( ! is_string( $sql ) ) {
+					return $this->migration_failed( 'details duplicate query preparation' );
+				}
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- values are prepared above.
+				$deleted = $wpdb->query( $sql );
+				if ( false === $deleted || $delete_count !== (int) $deleted ) {
+					return $this->migration_failed( 'details duplicate resolution' );
+				}
+			}
+		}
+
+		$clauses = [];
+		if ( [] !== $primary_columns ) {
+			$clauses[] = 'DROP PRIMARY KEY';
+		}
+		if ( $has_legacy_key ) {
+			$clauses[] = 'DROP INDEX `u_stat`';
+		}
+		$clauses[] = 'ADD PRIMARY KEY (`timestamp`, `id`)';
+		$sql       = 'ALTER TABLE `' . $table . '` ' . implode( ', ', $clauses );
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and index names are fixed.
+		if ( false === $wpdb->query( $sql ) ) {
+			return $this->migration_failed( 'details primary key migration' );
+		}
+		return true;
+	}
+
+	/**
+	 * Log a non-fatal migration failure without database contents or errors.
+	 *
+	 * @param string $stage Static migration stage identifier.
+	 * @return false
+	 * @since 4.6.2
+	 */
+	private function migration_failed( $stage ) {
+		\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( sprintf( 'Schema migration aborted during %s.', $stage ) );
+		return false;
 	}
 
 	/**
