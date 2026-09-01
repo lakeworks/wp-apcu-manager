@@ -1,4 +1,5 @@
 <?php
+/* APCU_MANAGER_DROPIN */
 /**
  * Plugin Name:         APCu Objects Cache Handler
  * Plugin URI:          https://perfops.one/apcu-manager
@@ -14,14 +15,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
-	define( 'WP_PLUGIN_DIR', WP_CONTENT_DIR . '/plugins' );
-}
-$handler_file = WP_PLUGIN_DIR . '/apcu-manager/includes/api/object-class.php';
-if ( ! file_exists( $handler_file ) ) {
-	$handler_file = __DIR__ . '/plugins/apcu-manager/includes/api/object-class.php';
-}
-$apcu_file = dirname( $handler_file, 2 ) . '/system/class-apcu.php';
+$plugin_dir   = '{{APCM_PLUGIN_DIR}}';
+$handler_file = $plugin_dir . '/includes/api/object-class.php';
+$apcu_file    = $plugin_dir . '/includes/system/class-apcu.php';
 
 function apcm_is_blacklisted_ajax_call() {
 	if ( wp_doing_ajax() ) {

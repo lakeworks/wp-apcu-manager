@@ -22,6 +22,7 @@ use APCuManager\System\Timezone;
 use PerfOpsOne\Menus;
 use PerfOpsOne\AdminBar;
 use APCuManager\System\APCu;
+use APCuManager\System\Dropin;
 
 /**
  * The admin-specific functionality of the plugin.
@@ -321,24 +322,24 @@ class Apcu_Manager_Admin {
 				Option::network_set( 'history', array_key_exists( 'apcm_plugin_features_history', $_POST ) ? (string) filter_input( INPUT_POST, 'apcm_plugin_features_history', FILTER_SANITIZE_NUMBER_INT ) : Option::network_get( 'history' ) );
 				$old_earlyloading = Option::network_get( 'earlyloading' );
 				$new_earlyloading = array_key_exists( 'apcm_plugin_features_earlyloading', $_POST ) ? (bool) filter_input( INPUT_POST, 'apcm_plugin_features_earlyloading' ) : false;
-				Option::network_set( 'earlyloading', $new_earlyloading );
 				$ecode = 0;
 				if ( $old_earlyloading !== $new_earlyloading ) {
 					APCu::reset();
-					apcm_check_earlyloading();
-					if ( $new_earlyloading ) {
+					Option::network_set( 'earlyloading', $new_earlyloading );
+					if ( $new_earlyloading !== Option::network_get( 'earlyloading' ) ) {
+						$dropin_result = Dropin::FAILED;
+					} else {
+						$dropin_result = Dropin::apply_admin_change( $new_earlyloading );
+					}
+					if ( Dropin::FAILED === $dropin_result ) {
+						Option::network_set( 'earlyloading', $old_earlyloading );
+						$emessage = esc_html__( 'Unable to update the APCu Manager object cache handler.', 'apcu-manager' );
+						$ecode    = 10;
+					} elseif ( $new_earlyloading ) {
 						$emessage = esc_html__( 'APCu Manager is now the WordPress object cache handler.', 'apcu-manager' );
 						$ecode    = 1;
-						if ( defined ( 'APCM_BOOTSTRAP_ALREADY_EXISTS_REMOVED' ) && APCM_BOOTSTRAP_ALREADY_EXISTS_REMOVED ) {
-							$emessage .= '<br/>' . esc_html__( 'The previous handler has been removed.', 'apcu-manager' );
-						}
-						if ( defined ( 'APCM_BOOTSTRAP_COPY_ERROR' ) && APCM_BOOTSTRAP_COPY_ERROR ) {
-							$emessage = esc_html__( 'Unable to activate the APCu Manager handler.', 'apcu-manager' );
-							$ecode    = 10;
-						}
-						if ( defined ( 'APCM_BOOTSTRAP_ALREADY_EXISTS_ERROR' ) && APCM_BOOTSTRAP_ALREADY_EXISTS_ERROR ) {
-							$emessage = esc_html__( 'Unable to activate the APCu Manager handler.', 'apcu-manager' );
-							$ecode    = 20;
+						if ( Dropin::DEPLOYED_WITH_BACKUP === $dropin_result ) {
+							$emessage .= '<br/>' . esc_html__( 'The previous object cache handler was backed up.', 'apcu-manager' );
 						}
 					} else {
 						$emessage = esc_html__( 'APCu Manager is no longer the WordPress object cache handler.', 'apcu-manager' );
@@ -375,11 +376,21 @@ class Apcu_Manager_Admin {
 	private function reset_options() {
 		if ( ! empty( $_POST ) ) {
 			if ( array_key_exists( '_wpnonce', $_POST ) && wp_verify_nonce( $_POST['_wpnonce'], 'apcm-plugin-options' ) ) {
+				$old_earlyloading = Option::network_get( 'earlyloading' );
 				Option::reset_to_defaults();
-				$message = esc_html__( 'Plugin settings have been reset to defaults.', 'apcu-manager' );
-				$code    = 0;
-				add_settings_error( 'apcm_no_error', $code, $message, 'updated' );
-				\DecaLog\Engine::eventsLogger( APCM_SLUG )->info( 'Plugin settings reset to defaults.', [ 'code' => $code ] );
+				$dropin_result = $old_earlyloading ? Dropin::apply_admin_change( false ) : Dropin::UNCHANGED;
+				if ( Dropin::FAILED === $dropin_result ) {
+					Option::network_set( 'earlyloading', $old_earlyloading );
+					$message = esc_html__( 'Plugin settings were reset, but the object cache handler could not be removed.', 'apcu-manager' );
+					$code    = 2;
+					add_settings_error( 'apcm_dropin_error', $code, $message, 'error' );
+					\DecaLog\Engine::eventsLogger( APCM_SLUG )->warning( 'Plugin settings reset with an object-cache drop-in error.', [ 'code' => $code ] );
+				} else {
+					$message = esc_html__( 'Plugin settings have been reset to defaults.', 'apcu-manager' );
+					$code    = 0;
+					add_settings_error( 'apcm_no_error', $code, $message, 'updated' );
+					\DecaLog\Engine::eventsLogger( APCM_SLUG )->info( 'Plugin settings reset to defaults.', [ 'code' => $code ] );
+				}
 			} else {
 				$message = esc_html__( 'Plugin settings have not been reset to defaults. Please try again.', 'apcu-manager' );
 				$code    = 2;

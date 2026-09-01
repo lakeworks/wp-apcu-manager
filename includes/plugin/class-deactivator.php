@@ -31,7 +31,6 @@ class Deactivator {
 	 */
 	public static function deactivate() {
 		Option::network_set( 'earlyloading', false );
-		apcm_reset_earlyloading();
 		APCu::reset();
 	}
 
