@@ -64,12 +64,7 @@ class Updater {
 			apcm_reset_earlyloading();
 			APCu::reset();
 		}
-		if ( ! ( defined( 'POO_SELFUPDATE_BYPASS' ) && POO_SELFUPDATE_BYPASS ) ) {
-			add_filter( 'plugins_api', [ $this, 'plugin_info' ], PHP_INT_MIN, 3 );
-			add_filter( 'site_transient_update_plugins', [ $this, 'info_update' ] );
-			add_action( 'upgrader_process_complete', [ $this, 'info_reset' ], 10, 2 );
-			add_filter( 'clean_url', [ $this, 'filter_logo' ], PHP_INT_MAX, 3 );
-		}
+		// This fork is updated via git only; the PerfOps One self-updater is intentionally disabled.
 	}
 
 	/**

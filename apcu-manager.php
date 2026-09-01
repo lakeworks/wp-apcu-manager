@@ -9,6 +9,7 @@
  * @wordpress-plugin
  * Plugin Name:       APCu Manager
  * Plugin URI:        https://perfops.one/apcu-manager
+ * Update URI:        false
  * Description:       APCu statistics and management right in the WordPress admin dashboard.
  * Version:           4.6.1
  * Requires at least: 6.4
