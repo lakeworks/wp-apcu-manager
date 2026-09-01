@@ -34,9 +34,8 @@ class Environment {
 	 * @since 1.0.0
 	 */
 	public static function init() {
-		$plugin_path         = str_replace( APCM_SLUG . '/includes/system/', APCM_SLUG . '/', plugin_dir_path( __FILE__ ) );
-		$plugin_path         = str_replace( APCM_SLUG . '\includes\system/', APCM_SLUG . '/', $plugin_path );
-		$plugin_url          = str_replace( APCM_SLUG . '/includes/system/', APCM_SLUG . '/', plugin_dir_url( __FILE__ ) );
+		$plugin_path         = plugin_dir_path( APCM_PLUGIN_FILE );
+		$plugin_url          = plugin_dir_url( APCM_PLUGIN_FILE );
 		$plugin_relative_url = str_replace( get_site_url() . '/', '', $plugin_url );
 		define( 'APCM_PLUGIN_DIR', $plugin_path );
 		define( 'APCM_PLUGIN_URL', $plugin_url );

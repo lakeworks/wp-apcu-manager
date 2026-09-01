@@ -119,7 +119,7 @@ class Core {
 		$this->loader->add_action( 'admin_init', $plugin_admin, 'init_settings_sections' );
 		$this->loader->add_action( 'admin_init', Schema::class, 'maybe_migrate', 1, 0 );
 		$this->loader->add_action( 'upgrader_process_complete', Schema::class, 'maybe_migrate', 10, 2 );
-		$this->loader->add_filter( 'plugin_action_links_' . plugin_basename( APCM_PLUGIN_DIR . APCM_SLUG . '.php' ), $plugin_admin, 'add_actions_links', 10, 4 );
+		$this->loader->add_filter( 'plugin_action_links_' . plugin_basename( APCM_PLUGIN_FILE ), $plugin_admin, 'add_actions_links', 10, 4 );
 		$this->loader->add_filter( 'plugin_row_meta', $plugin_admin, 'add_row_meta', 10, 2 );
 		$this->loader->add_action( 'admin_notices', $nag, 'display' );
 		$this->loader->add_action( 'wp_ajax_hide_apcm_nag', $nag, 'hide_callback' );

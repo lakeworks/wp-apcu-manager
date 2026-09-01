@@ -27,11 +27,89 @@ if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
+define( 'APCM_PLUGIN_FILE', __FILE__ );
+
 require_once __DIR__ . '/init.php';
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/includes/system/class-option.php';
 require_once __DIR__ . '/includes/system/class-environment.php';
 require_once __DIR__ . '/autoload.php';
+
+/**
+ * Display the controlled failure for an incomplete vendored-library bundle.
+ *
+ * @since 4.6.2
+ */
+function apcm_missing_vendor_notice() {
+	echo '<div class="notice notice-error"><p>' . esc_html__( 'APCu Manager was deactivated because a required bundled library is missing. Reinstall the plugin from a trusted source.', 'apcu-manager' ) . '</p></div>';
+}
+
+/**
+ * Self-deactivate when a required vendored library is missing.
+ *
+ * @since 4.6.2
+ */
+function apcm_deactivate_for_missing_vendor() {
+	if ( ! function_exists( 'deactivate_plugins' ) ) {
+		require_once ABSPATH . 'wp-admin/includes/plugin.php';
+	}
+	deactivate_plugins( plugin_basename( __FILE__ ), true, is_multisite() && is_network_admin() );
+}
+
+/**
+ * Stop activation cleanly when the vendored-library bundle is incomplete.
+ *
+ * @since 4.6.2
+ */
+function apcm_missing_vendor_activation_failure() {
+	apcm_deactivate_for_missing_vendor();
+	wp_die(
+		esc_html__( 'APCu Manager could not be activated because a required bundled library is missing. Reinstall the plugin from a trusted source.', 'apcu-manager' ),
+		esc_html__( 'APCu Manager activation failed', 'apcu-manager' ),
+		[ 'back_link' => true ]
+	);
+}
+
+/**
+ * Verify the entry points for every required vendored library.
+ *
+ * @return bool True when all required library entry points exist.
+ * @since 4.6.2
+ */
+function apcm_has_required_vendor_libraries() {
+	$required = [
+		__DIR__ . '/includes/libraries/class-libraries.php',
+		__DIR__ . '/includes/libraries/autoload.php',
+		__DIR__ . '/includes/libraries/decalog-sdk/Engine.php',
+		__DIR__ . '/includes/libraries/decalog-sdk/EventsLogger.php',
+		__DIR__ . '/includes/libraries/decalog-sdk/MetricsLogger.php',
+		__DIR__ . '/includes/libraries/decalog-sdk/TracesLogger.php',
+		__DIR__ . '/includes/libraries/feather/Icons.php',
+		__DIR__ . '/includes/libraries/kint/apcm_init.php',
+		__DIR__ . '/includes/libraries/markdown/Parser.php',
+		__DIR__ . '/includes/libraries/psr/http-client/ClientInterface.php',
+		__DIR__ . '/includes/libraries/psr/http-message/MessageInterface.php',
+		__DIR__ . '/includes/libraries/psr/log-v1/LoggerInterface.php',
+		__DIR__ . '/includes/libraries/psr/log-v3/LoggerInterface.php',
+		__DIR__ . '/includes/libraries/spyc/Spyc.php',
+		__DIR__ . '/perfopsone/init.php',
+	];
+	foreach ( $required as $file ) {
+		if ( ! is_readable( $file ) ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+if ( ! apcm_has_required_vendor_libraries() ) {
+	add_action( 'admin_notices', 'apcm_missing_vendor_notice' );
+	add_action( 'network_admin_notices', 'apcm_missing_vendor_notice' );
+	register_activation_hook( __FILE__, 'apcm_missing_vendor_activation_failure' );
+	apcm_deactivate_for_missing_vendor();
+	return;
+}
+
 require_once __DIR__ . '/includes/libraries/class-libraries.php';
 require_once __DIR__ . '/includes/libraries/autoload.php';
 require_once __DIR__ . '/includes/features/class-wpcli.php';
