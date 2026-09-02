@@ -630,8 +630,15 @@ class WP_Object_Cache {
 			return false;
 		}
 		try {
+			$iteration = 0;
 			foreach ( $seeds as $seed ) {
-				$iterator = new \APCUIterator( '/' . preg_quote( $seed, '/' ) . '/', APC_ITER_KEY, APCU_ITERATOR_MAX_CHUNCK_SIZE, APC_LIST_ACTIVE );
+				$iteration++;
+				if ( APCU_ITERATOR_MAX_LOOP < $iteration ) {
+					$this->metrics['flush']['fail'] += 1;
+					error_log( sprintf( 'APCu Manager flush incomplete: condition=iterator_limit at %s:%d.', basename( __FILE__ ), __LINE__ ) );
+					return false;
+				}
+				$iterator = new \APCUIterator( '/^' . preg_quote( $seed, '/' ) . '/', APC_ITER_KEY, APCU_ITERATOR_MAX_CHUNCK_SIZE, APC_LIST_ACTIVE );
 				if ( true !== apcu_delete( $iterator ) ) {
 					$this->metrics['flush']['fail'] += 1;
 					error_log( sprintf( 'APCu Manager flush incomplete: condition=iterator_delete_failed at %s:%d.', basename( __FILE__ ), __LINE__ ) );
