@@ -14,6 +14,7 @@ use APCuManager\System\Option;
 use APCuManager\System\Cache;
 use APCuManager\System\Http;
 use Exception;
+use APCuManager\Plugin\Feature\Schema;
 use APCuManager\System\APCu;
 use APCuManager\System\Markdown;
 
@@ -60,6 +61,7 @@ class Updater {
 			Nag::add( 'update', 'info', $message );
 			APCu::reset();
 		}
+		$this->update();
 		// This fork is updated via git only; the PerfOps One self-updater is intentionally disabled.
 	}
 
@@ -70,6 +72,16 @@ class Updater {
 	 */
 	private function install() {
 
+	}
+
+	/**
+	 * Performs authorized post-update schema creation or migration.
+	 *
+	 * @since 1.0.0
+	 */
+	private function update() {
+		$schema = new Schema();
+		$schema->update();
 	}
 
 	/**

@@ -70,6 +70,23 @@ class Schema {
 	}
 
 	/**
+	 * Initialize the schema from the authorized activation path.
+	 *
+	 * @return bool|string True when current, false on failure, or a status constant.
+	 * @since 1.0.0
+	 */
+	public function initialize() {
+		if ( ! self::is_authorized() ) {
+			return false;
+		}
+		$result = self::migrate_if_needed();
+		if ( true === $result ) {
+			\DecaLog\Engine::eventsLogger( APCM_SLUG )->info( 'Schema installed.' );
+		}
+		return $result;
+	}
+
+	/**
 	 * Effectively write a record in the database.
 	 *
 	 * @param   array  $record    The record to write.
@@ -139,6 +156,19 @@ class Schema {
 	 */
 	public static function maybe_migrate( $upgrader = null, $options = [] ) {
 		if ( ! self::is_authorized() || ! self::is_this_plugin_upgrade( $options ) ) {
+			return false;
+		}
+		return self::migrate_if_needed();
+	}
+
+	/**
+	 * Update the schema from an authorized plugin bootstrap.
+	 *
+	 * @return bool|string True when current, false on failure, or a status constant.
+	 * @since 1.0.0
+	 */
+	public function update() {
+		if ( ! self::is_authorized() ) {
 			return false;
 		}
 		return self::migrate_if_needed();
@@ -396,17 +426,22 @@ class Schema {
 			return $this->migration_failed( 'details index inspection' );
 		}
 		$primary_columns = [];
-		$has_legacy_key  = false;
+		$legacy_columns  = [];
+		$legacy_unique   = false;
 		foreach ( $indexes as $index ) {
 			if ( isset( $index['Key_name'] ) && 'PRIMARY' === $index['Key_name'] && isset( $index['Seq_in_index'], $index['Column_name'] ) ) {
 				$primary_columns[ (int) $index['Seq_in_index'] ] = $index['Column_name'];
 			}
-			if ( isset( $index['Key_name'] ) && 'u_stat' === $index['Key_name'] ) {
-				$has_legacy_key = true;
+			if ( isset( $index['Key_name'] ) && 'u_stat' === $index['Key_name'] && isset( $index['Seq_in_index'], $index['Column_name'] ) ) {
+				$legacy_columns[ (int) $index['Seq_in_index'] ] = $index['Column_name'];
+				$legacy_unique = isset( $index['Non_unique'] ) && 0 === (int) $index['Non_unique'];
 			}
 		}
 		ksort( $primary_columns );
 		$primary_columns = array_values( $primary_columns );
+		ksort( $legacy_columns );
+		$legacy_columns = array_values( $legacy_columns );
+		$has_legacy_key = [] !== $legacy_columns;
 		if ( [ 'timestamp', 'id' ] === $primary_columns ) {
 			if ( $has_legacy_key ) {
 				$sql = 'ALTER TABLE `' . $table . '` DROP INDEX `u_stat`';
@@ -418,50 +453,18 @@ class Schema {
 			return true;
 		}
 
-		$temporary_primary = false;
-		if ( [] === $primary_columns ) {
-			$sql = 'SHOW COLUMNS FROM `' . $table . "` LIKE 'apcm_migration_id'";
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and column names are fixed.
-			$temporary_column = $wpdb->get_row( $sql, ARRAY_A );
-			if ( ! is_array( $temporary_column ) ) {
-				$sql = 'ALTER TABLE `' . $table . '` ADD COLUMN `apcm_migration_id` bigint UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY';
-				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and column names are fixed.
-				if ( false === $wpdb->query( $sql ) ) {
-					return $this->migration_failed( 'details temporary primary key creation' );
-				}
-			} else {
-				$sql = 'ALTER TABLE `' . $table . '` ADD PRIMARY KEY (`apcm_migration_id`)';
-				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and column names are fixed.
-				if ( false === $wpdb->query( $sql ) ) {
-					return $this->migration_failed( 'details temporary primary key recovery' );
-				}
-			}
-			$primary_columns   = [ 'apcm_migration_id' ];
-			$temporary_primary = true;
-		} elseif ( [ 'apcm_migration_id' ] === $primary_columns ) {
-			$temporary_primary = true;
-		} elseif ( [ 'timestamp' ] !== $primary_columns ) {
-			return $this->migration_failed( 'details unsupported primary key' );
-		}
-
-		if ( $temporary_primary ) {
-			$sql = 'DELETE loser FROM `' . $table . '` AS loser INNER JOIN `' . $table . '` AS winner ON loser.`timestamp` = winner.`timestamp` AND loser.`id` = winner.`id` AND loser.`apcm_migration_id` > winner.`apcm_migration_id`';
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and column names are fixed.
-			if ( false === $wpdb->query( $sql ) ) {
-				return $this->migration_failed( 'details duplicate resolution' );
-			}
+		if ( ! $legacy_unique || [ 'timestamp', 'id' ] !== $legacy_columns ) {
+			return $this->migration_failed( 'details unique key unavailable' );
 		}
 
 		$clauses = [];
 		if ( [] !== $primary_columns ) {
 			$clauses[] = 'DROP PRIMARY KEY';
 		}
-		if ( $temporary_primary ) {
+		if ( [ 'apcm_migration_id' ] === $primary_columns ) {
 			$clauses[] = 'DROP COLUMN `apcm_migration_id`';
 		}
-		if ( $has_legacy_key ) {
-			$clauses[] = 'DROP INDEX `u_stat`';
-		}
+		$clauses[] = 'DROP INDEX `u_stat`';
 		$clauses[] = 'ADD PRIMARY KEY (`timestamp`, `id`)';
 		$sql       = 'ALTER TABLE `' . $table . '` ' . implode( ', ', $clauses );
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and index names are fixed.
