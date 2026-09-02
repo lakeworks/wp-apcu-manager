@@ -33,7 +33,10 @@ class AnalyticsFactory {
 	 * @since    1.0.0
 	 */
 	public static function get_stats_callback() {
-		check_ajax_referer( 'ajax_apcm', 'nonce' );
+		$capability = is_multisite() ? 'manage_network_options' : 'manage_options';
+		if ( ! current_user_can( $capability ) || false === check_ajax_referer( 'ajax_apcm', 'nonce', false ) ) {
+			wp_send_json_error( null, 403 );
+		}
 		$analytics = self::get_analytics( true );
 		$query     = filter_input( INPUT_POST, 'query' );
 		$queried   = filter_input( INPUT_POST, 'queried' );

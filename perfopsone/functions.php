@@ -18,15 +18,18 @@ if ( ! function_exists( 'poo_switch_autoupdate_callback' ) ) {
 	 * @since    2.0.0
 	 */
 	function poo_switch_autoupdate_callback() {
-		check_ajax_referer( 'poo-auto-update', 'nonce' );
+		$capability = is_multisite() ? 'manage_network_options' : 'manage_options';
+		if ( ! current_user_can( $capability ) || false === check_ajax_referer( 'poo-auto-update', 'nonce', false ) ) {
+			wp_send_json_error( null, 403 );
+		}
 		$plugin = new Plugin( filter_input( INPUT_POST, 'plugin' ) );
 		if ( ! current_user_can( 'update_plugins' ) || ! wp_is_auto_update_enabled_for_type( 'plugin' ) || ( is_multisite() && ! is_network_admin() ) ) {
-			wp_die( 403 );
+			wp_send_json_error( null, 403 );
 		}
 		if ( $plugin->switch_auto_update() ) {
-			wp_die( 200 );
+			wp_send_json_success();
 		} else {
-			wp_die( 500 );
+			wp_send_json_error( null, 500 );
 		}
 	}
 	add_action( 'wp_ajax_poo_switch_autoupdate', 'poo_switch_autoupdate_callback' );

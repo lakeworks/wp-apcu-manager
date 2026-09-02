@@ -135,15 +135,19 @@ class Nag {
 	 * @since 1.0.0
 	 */
 	public static function hide_callback() {
+		$capability = is_multisite() ? 'manage_network_options' : 'manage_options';
+		if ( ! current_user_can( $capability ) ) {
+			wp_send_json_error( null, 403 );
+		}
 		foreach ( self::$nags as $key => $nag ) {
 			$nonce_action = sanitize_key( $key );
 			$nonce_name   = str_replace( [ '-', '_' ], '', $nonce_action );
 			if ( false !== check_ajax_referer( $nonce_action, $nonce_name, false ) ) {
 				self::delete( $key );
-				wp_die( 200 );
+				wp_send_json_success();
 			}
 		}
-		wp_die( 409 );
+		wp_send_json_error( null, 403 );
 	}
 }
 
