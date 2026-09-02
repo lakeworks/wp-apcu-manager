@@ -51,6 +51,7 @@ function apcm_missing_vendor_notice() {
  * @since 4.6.2
  */
 function apcm_deactivate_for_missing_vendor() {
+	\APCuManager\System\Dropin::remove_managed();
 	if ( ! function_exists( 'deactivate_plugins' ) ) {
 		require_once ABSPATH . 'wp-admin/includes/plugin.php';
 	}

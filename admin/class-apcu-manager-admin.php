@@ -335,6 +335,9 @@ class Apcu_Manager_Admin {
 						Option::network_set( 'earlyloading', $old_earlyloading );
 						$emessage = esc_html__( 'Unable to update the APCu Manager object cache handler.', 'apcu-manager' );
 						$ecode    = 10;
+					} elseif ( Dropin::FOREIGN_LEFT === $dropin_result ) {
+						$emessage = esc_html__( 'The object cache handler is not managed by APCu Manager and was left untouched.', 'apcu-manager' );
+						$ecode    = 10;
 					} elseif ( $new_earlyloading ) {
 						$emessage = esc_html__( 'APCu Manager is now the WordPress object cache handler.', 'apcu-manager' );
 						$ecode    = 1;
@@ -385,6 +388,11 @@ class Apcu_Manager_Admin {
 					$code    = 2;
 					add_settings_error( 'apcm_dropin_error', $code, $message, 'error' );
 					\DecaLog\Engine::eventsLogger( APCM_SLUG )->warning( 'Plugin settings reset with an object-cache drop-in error.', [ 'code' => $code ] );
+				} elseif ( Dropin::FOREIGN_LEFT === $dropin_result ) {
+					$message = esc_html__( 'Plugin settings were reset, but the object cache handler is not managed by APCu Manager and was left untouched.', 'apcu-manager' );
+					$code    = 2;
+					add_settings_error( 'apcm_dropin_foreign', $code, $message, 'warning' );
+					\DecaLog\Engine::eventsLogger( APCM_SLUG )->warning( sprintf( 'Plugin settings reset with a foreign object-cache drop-in: code=%d at %s:%d.', $code, basename( __FILE__ ), __LINE__ ) );
 				} else {
 					$message = esc_html__( 'Plugin settings have been reset to defaults.', 'apcu-manager' );
 					$code    = 0;

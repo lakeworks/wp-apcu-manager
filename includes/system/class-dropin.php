@@ -21,6 +21,8 @@ class Dropin {
 
 	public const UNCHANGED = 'unchanged';
 
+	public const FOREIGN_LEFT = 'foreign_left';
+
 	public const FAILED = 'failed';
 
 	private const MARKER = 'APCU_MANAGER_DROPIN';
@@ -91,6 +93,15 @@ class Dropin {
 	}
 
 	/**
+	 * Remove the managed drop-in from lifecycle paths outside wp-admin.
+	 *
+	 * @return string One of the lifecycle result constants.
+	 */
+	public static function remove_managed() {
+		return self::sync( false );
+	}
+
+	/**
 	 * Generate and atomically deploy the managed drop-in.
 	 *
 	 * @return string One of the lifecycle result constants.
@@ -128,7 +139,17 @@ class Dropin {
 
 		$backup = '';
 		if ( file_exists( $target ) && ! self::is_managed( $target ) ) {
-			$backup = WP_CONTENT_DIR . '/object-cache.php.bak-' . gmdate( 'YmdHis' );
+			$backup_dir = self::prepare_backup_directory();
+			if ( false === $backup_dir ) {
+				self::remove_temp( $temp );
+				return self::FAILED;
+			}
+			try {
+				$backup = $backup_dir . '/object-cache.php.bak-' . bin2hex( random_bytes( 8 ) );
+			} catch ( \Throwable $e ) {
+				self::remove_temp( $temp );
+				return self::FAILED;
+			}
 			if ( file_exists( $backup ) || ! rename( $target, $backup ) ) {
 				self::remove_temp( $temp );
 				return self::FAILED;
@@ -151,10 +172,41 @@ class Dropin {
 	 */
 	private static function remove() {
 		$target = WP_CONTENT_DIR . '/object-cache.php';
-		if ( ! file_exists( $target ) || ! self::is_managed( $target ) ) {
+		if ( ! file_exists( $target ) ) {
 			return self::UNCHANGED;
 		}
+		if ( ! self::is_managed( $target ) ) {
+			return self::FOREIGN_LEFT;
+		}
 		return unlink( $target ) ? self::REMOVED : self::FAILED;
+	}
+
+	/**
+	 * Create the private backup directory and its web-deny stubs.
+	 *
+	 * @return string|false Backup directory path, or false on failure.
+	 */
+	private static function prepare_backup_directory() {
+		$directory = WP_CONTENT_DIR . '/apcm-backups';
+		if ( ! is_dir( $directory ) && ! mkdir( $directory, 0700, true ) && ! is_dir( $directory ) ) {
+			return false;
+		}
+		if ( ! chmod( $directory, 0700 ) ) {
+			return false;
+		}
+		$stubs = [
+			'index.php'  => "<?php\nif ( ! defined( 'ABSPATH' ) ) {\n\texit;\n}\n",
+			'.htaccess'  => "Require all denied\nDeny from all\n",
+			'web.config' => "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n  <system.webServer>\n    <security>\n      <authorization>\n        <clear />\n        <add accessType=\"Deny\" users=\"*\" />\n      </authorization>\n    </security>\n  </system.webServer>\n</configuration>\n",
+		];
+		foreach ( $stubs as $name => $content ) {
+			$file    = $directory . '/' . $name;
+			$written = @file_put_contents( $file, $content, LOCK_EX );
+			if ( strlen( $content ) !== $written || ! chmod( $file, 0600 ) ) {
+				return false;
+			}
+		}
+		return $directory;
 	}
 
 	/**

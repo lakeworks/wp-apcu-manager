@@ -16,6 +16,7 @@ use APCuManager\System\Environment;
 use APCuManager\System\Option;
 use APCuManager\Plugin\Feature\Analytics;
 use APCuManager\System\Markdown;
+use APCuManager\System\Dropin;
 use Spyc;
 
 /**
@@ -291,8 +292,16 @@ class Wpcli {
 						break;
 					case 'object-caching':
 						\WP_CLI::confirm( 'Are you sure you want to deactivate WordPress object caching?', $assoc_args );
+						$dropin_result = Dropin::remove_managed();
+						if ( Dropin::FAILED === $dropin_result ) {
+							$this->error( 255, $stdout );
+						}
 						Option::network_set( 'earlyloading', false );
-						$this->success( 'WordPress object caching is now deactivated.', '', $stdout );
+						if ( Dropin::FOREIGN_LEFT === $dropin_result ) {
+							$this->warning( 'The object-cache drop-in is not managed by APCu Manager and was left untouched.', '', $stdout );
+						} else {
+							$this->success( 'WordPress object caching is now deactivated.', '', $stdout );
+						}
 						break;
 					default:
 						$this->error( 1, $stdout );

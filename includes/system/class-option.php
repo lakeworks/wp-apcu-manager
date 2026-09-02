@@ -219,9 +219,17 @@ class Option {
 	 */
 	public static function site_delete_all() {
 		global $wpdb;
-		$result = 0;
-		// phpcs:ignore
-		$delete = $wpdb->get_col( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE '" . APCM_PRODUCT_ABBREVIATION . '_%' . "';" );
+		$result       = 0;
+		$option_names = array_map(
+			static function ( $option ) {
+				return APCM_PRODUCT_ABBREVIATION . '_' . $option;
+			},
+			array_keys( self::$defaults )
+		);
+		$placeholders = implode( ', ', array_fill( 0, count( $option_names ), '%s' ) );
+		$sql          = $wpdb->prepare( "SELECT option_name FROM {$wpdb->options} WHERE option_name IN ($placeholders)", ...$option_names );
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- values are prepared above and the table is WordPress-owned.
+		$delete = is_string( $sql ) ? $wpdb->get_col( $sql ) : [];
 		foreach ( $delete as $option ) {
 			if ( delete_option( $option ) ) {
 				++$result;

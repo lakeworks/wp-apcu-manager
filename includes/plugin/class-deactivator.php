@@ -11,6 +11,7 @@ namespace APCuManager\Plugin;
 
 use APCuManager\System\Option;
 use APCuManager\System\APCu;
+use APCuManager\System\Dropin;
 
 /**
  * Fired during plugin deactivation.
@@ -31,6 +32,7 @@ class Deactivator {
 	 */
 	public static function deactivate() {
 		Option::network_set( 'earlyloading', false );
+		Dropin::remove_managed();
 		APCu::reset();
 	}
 

@@ -11,6 +11,7 @@ namespace APCuManager\Plugin;
 
 use APCuManager\System\Option;
 use APCuManager\System\User;
+use APCuManager\System\Dropin;
 use APCuManager\Plugin\Feature\Schema;
 
 /**
@@ -30,6 +31,7 @@ class Uninstaller {
 	 * @since 1.0.0
 	 */
 	public static function uninstall() {
+		Dropin::remove_managed();
 		Option::site_delete_all();
 		User::delete_all_meta();
 		$schema = new Schema();
