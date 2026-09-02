@@ -201,18 +201,14 @@ class Dropin {
 		if ( ! is_dir( $directory ) && ! mkdir( $directory, 0700, true ) && ! is_dir( $directory ) ) {
 			return false;
 		}
-		if ( ! chmod( $directory, 0700 ) ) {
-			return false;
-		}
 		$stubs = [
 			'index.php'  => "<?php\nif ( ! defined( 'ABSPATH' ) ) {\n\texit;\n}\n",
-			'.htaccess'  => "Require all denied\nDeny from all\n",
-			'web.config' => "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n  <system.webServer>\n    <security>\n      <authorization>\n        <clear />\n        <add accessType=\"Deny\" users=\"*\" />\n      </authorization>\n    </security>\n  </system.webServer>\n</configuration>\n",
+			'web.config' => "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n  <system.webServer>\n    <handlers accessPolicy=\"Read\" />\n    <security>\n      <authorization>\n        <remove users=\"*\" roles=\"\" verbs=\"\" />\n        <add accessType=\"Deny\" users=\"*\" />\n      </authorization>\n    </security>\n  </system.webServer>\n</configuration>\n",
 		];
 		foreach ( $stubs as $name => $content ) {
 			$file    = $directory . '/' . $name;
 			$written = @file_put_contents( $file, $content, LOCK_EX );
-			if ( strlen( $content ) !== $written || ! chmod( $file, 0600 ) ) {
+			if ( strlen( $content ) !== $written ) {
 				return false;
 			}
 		}
