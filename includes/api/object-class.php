@@ -17,10 +17,16 @@ if ( ! class_exists( 'APCuManager\System\APCu', false ) ) {
 	require_once __DIR__ . '/../system/class-apcu.php';
 }
 
+/**
+ * APCUIterator's internal fetch chunk size, not a total flush-work bound.
+ */
 if ( ! defined( 'APCU_ITERATOR_MAX_CHUNCK_SIZE' ) ) {
 	define( 'APCU_ITERATOR_MAX_CHUNCK_SIZE', 2500 );
 }
 
+/**
+ * Maximum seed walks per flush call, not iterator passes or deleted entries.
+ */
 if ( ! defined( 'APCU_ITERATOR_MAX_LOOP' ) ) {
 	define( 'APCU_ITERATOR_MAX_LOOP', 20 );
 }
@@ -635,9 +641,13 @@ class WP_Object_Cache {
 	/**
 	 * Remove specific data from persistent cache.
 	 *
+	 * Each seed starts one complete APCUIterator walk. The seed counter limits
+	 * the number of walks; APCu's own per-walk budget bounds each walk. The
+	 * return value reports any extension refusal, exception, or lost APCu state.
+	 *
 	 * @param array $seeds The seeds to remove.
 	 *
-	 * @return bool True when the sweep completed, false when APCu is unavailable or incomplete.
+	 * @return bool True when every requested seed walk completed, false otherwise.
 	 */
 	private function partial_flush_persistent( $seeds ) {
 		$chrono = microtime( true );
