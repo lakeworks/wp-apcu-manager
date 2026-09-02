@@ -13,6 +13,10 @@ use APCuManager\System\Cache;
 use APCuManager\System\Environment;
 use APCuManager\System\APCu;
 
+if ( ! class_exists( 'APCuManager\System\APCu', false ) ) {
+	require_once __DIR__ . '/../system/class-apcu.php';
+}
+
 if ( ! defined( 'APCU_ITERATOR_MAX_CHUNCK_SIZE' ) ) {
 	define( 'APCU_ITERATOR_MAX_CHUNCK_SIZE', 2500 );
 }

@@ -24,7 +24,6 @@ function apcm_expect( $condition, $label ) {
 	}
 }
 
-require_once __DIR__ . '/../includes/system/class-apcu.php';
 require_once __DIR__ . '/../includes/api/object-class.php';
 
 apcm_expect( method_exists( 'WP_Object_Cache', 'instance' ), 'stale loader receives plugin cache class' );
