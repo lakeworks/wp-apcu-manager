@@ -51,6 +51,13 @@ function apcm_missing_vendor_notice() {
  * @since 4.6.2
  */
 function apcm_deactivate_for_missing_vendor() {
+	if ( ! is_admin() || ! function_exists( 'current_user_can' ) ) {
+		return;
+	}
+	$capability = is_multisite() ? 'manage_network_options' : 'manage_options';
+	if ( ! current_user_can( $capability ) ) {
+		return;
+	}
 	\APCuManager\System\Dropin::remove_managed();
 	if ( ! function_exists( 'deactivate_plugins' ) ) {
 		require_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -104,16 +111,19 @@ function apcm_has_required_vendor_libraries() {
 	return true;
 }
 
-if ( ! apcm_has_required_vendor_libraries() ) {
+if ( is_admin() && ! apcm_has_required_vendor_libraries() ) {
 	add_action( 'admin_notices', 'apcm_missing_vendor_notice' );
 	add_action( 'network_admin_notices', 'apcm_missing_vendor_notice' );
 	register_activation_hook( __FILE__, 'apcm_missing_vendor_activation_failure' );
-	apcm_deactivate_for_missing_vendor();
+	add_action( 'admin_init', 'apcm_deactivate_for_missing_vendor' );
 	return;
 }
 
-require_once __DIR__ . '/includes/libraries/class-libraries.php';
-require_once __DIR__ . '/includes/libraries/autoload.php';
+$apcm_libraries_loaded = @include_once __DIR__ . '/includes/libraries/class-libraries.php';
+$apcm_autoload_loaded  = @include_once __DIR__ . '/includes/libraries/autoload.php';
+if ( false === $apcm_libraries_loaded || false === $apcm_autoload_loaded || ! class_exists( 'DecaLog\Engine' ) ) {
+	return;
+}
 require_once __DIR__ . '/includes/features/class-wpcli.php';
 
 /**
