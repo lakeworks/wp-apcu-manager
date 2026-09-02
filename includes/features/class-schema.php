@@ -233,6 +233,11 @@ class Schema {
 			return self::BUSY;
 		}
 		try {
+			$attempts = min( self::MAX_MIGRATION_ATTEMPTS, (int) Option::network_get( 'schema_migration_attempts' ) + 1 );
+			Option::network_set( 'schema_migration_attempts', $attempts );
+			if ( $attempts !== (int) Option::network_get( 'schema_migration_attempts' ) ) {
+				throw new \RuntimeException( 'migration attempt storage' );
+			}
 			$this->create_tables();
 			if ( ! $this->migrate_existing_tables() ) {
 				throw new \RuntimeException( 'existing table migration' );
@@ -245,8 +250,7 @@ class Schema {
 			\DecaLog\Engine::eventsLogger( APCM_SLUG )->info( 'Schema updated.' );
 			return true;
 		} catch ( \Throwable $e ) {
-			$attempts = min( self::MAX_MIGRATION_ATTEMPTS, (int) Option::network_get( 'schema_migration_attempts' ) + 1 );
-			Option::network_set( 'schema_migration_attempts', $attempts );
+			$attempts = (int) Option::network_get( 'schema_migration_attempts' );
 			$stage = $e instanceof \RuntimeException ? $e->getMessage() : 'unexpected throwable';
 			\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( sprintf( 'Schema migration failed: stage=%s exception=%s at %s:%d.', $stage, get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
 			return self::MAX_MIGRATION_ATTEMPTS <= $attempts ? self::MANUAL_REPAIR : false;
