@@ -46,6 +46,20 @@ class Schema {
 	private const MAX_MIGRATION_ATTEMPTS = 3;
 
 	/**
+	 * Request-local write readiness result.
+	 *
+	 * @var bool|null
+	 */
+	private static $write_ready = null;
+
+	/**
+	 * Whether the unavailable-schema warning was emitted this request.
+	 *
+	 * @var bool
+	 */
+	private static $write_unavailable_logged = false;
+
+	/**
 	 * Statistics table name.
 	 *
 	 * @since  1.0.0
@@ -70,20 +84,39 @@ class Schema {
 	}
 
 	/**
-	 * Initialize the schema from the authorized activation path.
+	 * Create missing schema tables from the activation path.
 	 *
-	 * @return bool|string True when current, false on failure, or a status constant.
+	 * This path never alters an existing table.
+	 *
+	 * @return bool|string True on success, false on failure, or BUSY.
 	 * @since 1.0.0
 	 */
 	public function initialize() {
-		if ( ! self::is_authorized() ) {
-			return false;
+		global $wpdb;
+		$lock_query = $wpdb->prepare( 'SELECT GET_LOCK(%s, 0)', self::MIGRATION_LOCK );
+		$lock       = is_string( $lock_query ) ? $wpdb->get_var( $lock_query ) : false;
+		if ( '1' !== (string) $lock ) {
+			return self::BUSY;
 		}
-		$result = self::migrate_if_needed();
-		if ( true === $result ) {
+		try {
+			$statistics_exists = self::table_exists( $wpdb->base_prefix . self::$statistics );
+			$details_exists    = self::table_exists( $wpdb->base_prefix . self::$details );
+			$this->create_tables();
+			if ( ! $statistics_exists && ! $details_exists ) {
+				Option::network_set( 'schema_version', self::VERSION );
+				Option::network_set( 'schema_migration_attempts', 0 );
+			}
 			\DecaLog\Engine::eventsLogger( APCM_SLUG )->info( 'Schema installed.' );
+			return true;
+		} catch ( \Throwable $e ) {
+			\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( sprintf( 'Schema creation failed: exception=%s at %s:%d.', get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
+			return false;
+		} finally {
+			$release_query = $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', self::MIGRATION_LOCK );
+			if ( is_string( $release_query ) ) {
+				$wpdb->get_var( $release_query );
+			}
 		}
-		return $result;
 	}
 
 	/**
@@ -121,11 +154,15 @@ class Schema {
 	 * @since    1.0.0
 	 **/
 	public function write_statistics_record_to_database( $stat, $details = [] ) {
+		if ( ! self::is_ready_for_writes() ) {
+			return false;
+		}
 		$this->write_to_database( $stat, self::$statistics );
 		foreach ( $details as $detail ) {
 			$this->write_to_database( $detail, self::$details );
 		}
 		$this->purge();
+		return true;
 	}
 
 	/**
@@ -162,19 +199,6 @@ class Schema {
 	}
 
 	/**
-	 * Update the schema from an authorized plugin bootstrap.
-	 *
-	 * @return bool|string True when current, false on failure, or a status constant.
-	 * @since 1.0.0
-	 */
-	public function update() {
-		if ( ! self::is_authorized() ) {
-			return false;
-		}
-		return self::migrate_if_needed();
-	}
-
-	/**
 	 * Run a pending migration from a nonce-protected settings submission.
 	 *
 	 * @return bool|string True when current, false on failure, or a status constant.
@@ -196,6 +220,26 @@ class Schema {
 	}
 
 	/**
+	 * Report whether runtime analytics writes can safely use both tables.
+	 *
+	 * @return bool True when the schema is current and both tables exist.
+	 */
+	public static function is_ready_for_writes() {
+		if ( null === self::$write_ready ) {
+			try {
+				self::$write_ready = self::is_current() && self::tables_exist();
+			} catch ( \Throwable $e ) {
+				self::$write_ready = false;
+			}
+		}
+		if ( ! self::$write_ready && ! self::$write_unavailable_logged ) {
+			self::$write_unavailable_logged = true;
+			\DecaLog\Engine::eventsLogger( APCM_SLUG )->warning( 'Analytics persistence skipped because its schema is unavailable.' );
+		}
+		return self::$write_ready;
+	}
+
+	/**
 	 * Report whether automatic migration exhausted its retry budget.
 	 *
 	 * @return bool True when manual repair is required.
@@ -211,6 +255,28 @@ class Schema {
 	 */
 	private static function is_authorized() {
 		return current_user_can( is_multisite() ? 'manage_network_options' : 'manage_options' );
+	}
+
+	/**
+	 * Report whether both analytics tables exist.
+	 *
+	 * @return bool True when both tables exist.
+	 */
+	private static function tables_exist() {
+		global $wpdb;
+		return self::table_exists( $wpdb->base_prefix . self::$statistics ) && self::table_exists( $wpdb->base_prefix . self::$details );
+	}
+
+	/**
+	 * Report whether one plugin-owned table exists.
+	 *
+	 * @param string $table Fully prefixed table name.
+	 * @return bool True when the table exists.
+	 */
+	private static function table_exists( $table ) {
+		global $wpdb;
+		$query = $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) );
+		return is_string( $query ) && $table === $wpdb->get_var( $query );
 	}
 
 	/**
