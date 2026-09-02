@@ -15,27 +15,86 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$plugin_dir   = '{{APCM_PLUGIN_DIR}}';
-$handler_file = $plugin_dir . '/includes/api/object-class.php';
-$apcu_file    = $plugin_dir . '/includes/system/class-apcu.php';
-
-function apcm_is_blacklisted_ajax_call() {
-	if ( wp_doing_ajax() ) {
-		$action = isset( $_POST['action'] ) && is_string( $_POST['action'] ) ? $_POST['action'] : '';
-		if ( '' !== $action && str_contains( $action, 'wpmdb' ) && ! str_contains( $action, 'flush' ) ) {
-			return true;
-		}
+$plugin_dir      = '{{APCM_PLUGIN_DIR}}';
+$dropin_version  = '{{APCM_VERSION}}';
+$plugin_file     = $plugin_dir . '/apcu-manager.php';
+$handler_file    = $plugin_dir . '/includes/api/object-class.php';
+$apcu_file       = $plugin_dir . '/includes/system/class-apcu.php';
+$apcm_guard_fail = static function ( $condition ) {
+	static $logged = false;
+	if ( ! $logged ) {
+		error_log( sprintf( 'APCu Manager drop-in unavailable: condition=%s at %s:%d.', $condition, basename( __FILE__ ), __LINE__ ) );
+		$logged = true;
 	}
+};
 
-	return false;
+try {
+	$apcm_apcu_enabled = function_exists( 'apcu_enabled' ) && apcu_enabled();
+} catch ( \Throwable $e ) {
+	$apcm_guard_fail( 'apcu_enabled_exception' );
+	return;
+}
+if ( ! $apcm_apcu_enabled ) {
+	$apcm_guard_fail( 'apcu_disabled' );
+	return;
+}
+if ( ! is_file( $handler_file ) || ! is_readable( $handler_file ) ) {
+	$apcm_guard_fail( 'handler_unreadable' );
+	return;
+}
+if ( ! is_file( $apcu_file ) || ! is_readable( $apcu_file ) ) {
+	$apcm_guard_fail( 'apcu_class_unreadable' );
+	return;
+}
+if ( ! is_file( $plugin_file ) || ! is_readable( $plugin_file ) ) {
+	$apcm_guard_fail( 'plugin_header_unreadable' );
+	return;
+}
+$apcm_plugin_header = @file_get_contents( $plugin_file );
+$apcm_version_match = [];
+if ( ! is_string( $apcm_plugin_header ) || 1 !== preg_match( '/^[ \t*]*Version:\s*([^\r\n]+)/mi', $apcm_plugin_header, $apcm_version_match ) ) {
+	$apcm_guard_fail( 'plugin_version_unreadable' );
+	return;
+}
+if ( $dropin_version !== trim( $apcm_version_match[1] ) ) {
+	$apcm_guard_fail( 'plugin_version_mismatch' );
+	return;
 }
 
+$apcm_action = function_exists( 'wp_doing_ajax' ) && wp_doing_ajax() && isset( $_POST['action'] ) && is_string( $_POST['action'] ) ? $_POST['action'] : '';
+if ( '' !== $apcm_action && str_contains( $apcm_action, 'wpmdb' ) && ! str_contains( $apcm_action, 'flush' ) ) {
+	return;
+}
 
-if ( file_exists( $handler_file ) && file_exists( $apcu_file ) && ! apcm_is_blacklisted_ajax_call()) {
+define( 'APCM_DROPIN_VERSION', $dropin_version );
 
-	require_once $apcu_file;
-	require_once $handler_file;
+try {
+	$apcm_apcu_loaded = @require_once $apcu_file;
+} catch ( \Throwable $e ) {
+	$apcm_guard_fail( 'apcu_class_load_failed' );
+	return;
+}
+if ( false === $apcm_apcu_loaded ) {
+	$apcm_guard_fail( 'apcu_class_load_failed' );
+	return;
+}
+try {
+	$apcm_handler_loaded = @require_once $handler_file;
+} catch ( \Throwable $e ) {
+	$apcm_guard_fail( 'handler_load_failed' );
+	return;
+}
+if ( false === $apcm_handler_loaded ) {
+	$apcm_guard_fail( 'handler_load_failed' );
+	return;
+}
 
+if ( ! class_exists( 'WP_Object_Cache', false ) ) {
+	$apcm_guard_fail( 'handler_class_missing' );
+	return;
+}
+
+if ( class_exists( 'WP_Object_Cache', false ) ) {
 	if ( ! defined( 'APCM_BOOTSTRAPPED' ) ) {
 		define( 'APCM_BOOTSTRAPPED', true );
 	}

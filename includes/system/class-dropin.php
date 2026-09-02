@@ -25,7 +25,9 @@ class Dropin {
 
 	private const MARKER = 'APCU_MANAGER_DROPIN';
 
-	private const PLACEHOLDER = "'{{APCM_PLUGIN_DIR}}'";
+	private const PATH_PLACEHOLDER = "'{{APCM_PLUGIN_DIR}}'";
+
+	private const VERSION_PLACEHOLDER = "'{{APCM_VERSION}}'";
 
 	/**
 	 * Apply an explicit administrator option change.
@@ -100,11 +102,15 @@ class Dropin {
 			return self::FAILED;
 		}
 		$content = file_get_contents( $template );
-		if ( ! is_string( $content ) || 1 !== substr_count( $content, self::PLACEHOLDER ) ) {
+		if ( ! is_string( $content ) || 1 !== substr_count( $content, self::PATH_PLACEHOLDER ) || 1 !== substr_count( $content, self::VERSION_PLACEHOLDER ) ) {
 			return self::FAILED;
 		}
 		$plugin_dir = rtrim( APCM_PLUGIN_DIR, '/\\' );
-		$content    = str_replace( self::PLACEHOLDER, var_export( $plugin_dir, true ), $content );
+		$content    = str_replace(
+			[ self::PATH_PLACEHOLDER, self::VERSION_PLACEHOLDER ],
+			[ var_export( $plugin_dir, true ), var_export( APCM_VERSION, true ) ],
+			$content
+		);
 		$temp       = tempnam( WP_CONTENT_DIR, '.apcm-object-cache-' );
 		if ( false === $temp ) {
 			return self::FAILED;

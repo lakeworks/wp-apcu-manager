@@ -13,6 +13,26 @@ use APCuManager\System\Cache;
 use APCuManager\System\Environment;
 use APCuManager\System\APCu;
 
+if ( ! defined( 'APCM_DROPIN_VERSION' ) ) {
+	$core_cache_file = ABSPATH . WPINC . '/class-wp-object-cache.php';
+	try {
+		if ( is_readable( $core_cache_file ) ) {
+			@require_once $core_cache_file;
+		}
+	} catch ( \Throwable $e ) {
+		// The guarded log below records the scalar failure condition.
+	}
+	$apcm_stale_dropin_log = static function ( $condition ) {
+		static $logged = false;
+		if ( ! $logged ) {
+			error_log( sprintf( 'APCu Manager handler unavailable: condition=%s at %s:%d.', $condition, basename( __FILE__ ), __LINE__ ) );
+			$logged = true;
+		}
+	};
+	$apcm_stale_dropin_log( class_exists( 'WP_Object_Cache', false ) ? 'stale_dropin_core_cache_loaded' : 'stale_dropin_core_cache_unavailable' );
+	return;
+}
+
 if ( ! defined( 'APCU_ITERATOR_MAX_CHUNCK_SIZE' ) ) {
 	define( 'APCU_ITERATOR_MAX_CHUNCK_SIZE', 2500 );
 }
