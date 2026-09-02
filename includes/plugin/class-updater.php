@@ -14,7 +14,6 @@ use APCuManager\System\Option;
 use APCuManager\System\Cache;
 use APCuManager\System\Http;
 use Exception;
-use APCuManager\Plugin\Feature\Schema;
 use APCuManager\System\APCu;
 use APCuManager\System\Markdown;
 
@@ -52,7 +51,6 @@ class Updater {
 				// phpcs:ignore
 				$message = sprintf( esc_html__( '%1$s has been correctly installed.', 'apcu-manager' ), APCM_PRODUCT_NAME );
 			} else {
-				$this->update( $old );
 				// phpcs:ignore
 				$message  = sprintf( esc_html__( '%1$s has been correctly updated from version %2$s to version %3$s.', 'apcu-manager' ), APCM_PRODUCT_NAME, $old, APCM_VERSION );
 				\DecaLog\Engine::eventsLogger( APCM_SLUG )->notice( $message );
@@ -72,17 +70,6 @@ class Updater {
 	 */
 	private function install() {
 
-	}
-
-	/**
-	 * Performs post-update processes.
-	 *
-	 * @param   string $from   The version from which the plugin is updated.
-	 * @since 1.0.0
-	 */
-	private function update( $from ) {
-		$schema = new Schema();
-		$schema->update();
 	}
 
 	/**

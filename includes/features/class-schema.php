@@ -37,6 +37,14 @@ class Schema {
 	 */
 	private const VERSION = '2';
 
+	public const BUSY = 'busy';
+
+	public const MANUAL_REPAIR = 'manual_repair';
+
+	private const MIGRATION_LOCK = 'apcm_schema_migrate';
+
+	private const MAX_MIGRATION_ATTEMPTS = 3;
+
 	/**
 	 * Statistics table name.
 	 *
@@ -104,17 +112,6 @@ class Schema {
 	}
 
 	/**
-	 * Initialize the schema.
-	 *
-	 * @since    1.0.0
-	 */
-	public function initialize() {
-		if ( $this->run_migration() ) {
-			\DecaLog\Engine::eventsLogger( APCM_SLUG )->info( 'Schema installed.' );
-		}
-	}
-
-	/**
 	 * Finalize the schema.
 	 *
 	 * @since    1.0.0
@@ -133,29 +130,90 @@ class Schema {
 	}
 
 	/**
-	 * Update the schema.
-	 *
-	 * @since    1.0.0
-	 */
-	public function update() {
-		return self::maybe_migrate();
-	}
-
-	/**
-	 * Run a pending schema migration from an admin or upgrader context.
+	 * Run a pending schema migration after this plugin is upgraded.
 	 *
 	 * @param mixed $upgrader Optional upgrader instance.
 	 * @param array $options Optional upgrader hook data.
-	 * @return bool True when the schema is current, false otherwise.
+	 * @return bool|string True when current, false on failure, or a status constant.
 	 * @since 4.6.2
 	 */
 	public static function maybe_migrate( $upgrader = null, $options = [] ) {
-		$is_upgrade = is_array( $options ) && isset( $options['action'], $options['type'] ) && in_array( $options['action'], [ 'install', 'update' ], true ) && 'plugin' === $options['type'];
-		if ( ! is_admin() && ! $is_upgrade ) {
+		if ( ! self::is_authorized() || ! self::is_this_plugin_upgrade( $options ) ) {
 			return false;
 		}
-		if ( version_compare( (string) Option::network_get( 'schema_version' ), self::VERSION, '>=' ) ) {
+		return self::migrate_if_needed();
+	}
+
+	/**
+	 * Run a pending migration from a nonce-protected settings submission.
+	 *
+	 * @return bool|string True when current, false on failure, or a status constant.
+	 */
+	public static function maybe_migrate_from_settings() {
+		if ( ! self::is_authorized() || ! isset( $_POST['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ), 'apcm-plugin-options' ) ) {
+			return false;
+		}
+		return self::migrate_if_needed();
+	}
+
+	/**
+	 * Report whether the analytics schema is current.
+	 *
+	 * @return bool True when the stored schema version is current.
+	 */
+	public static function is_current() {
+		return version_compare( (string) Option::network_get( 'schema_version' ), self::VERSION, '>=' );
+	}
+
+	/**
+	 * Report whether automatic migration exhausted its retry budget.
+	 *
+	 * @return bool True when manual repair is required.
+	 */
+	public static function needs_manual_repair() {
+		return self::MAX_MIGRATION_ATTEMPTS <= (int) Option::network_get( 'schema_migration_attempts' );
+	}
+
+	/**
+	 * Check the administrator capability for this installation mode.
+	 *
+	 * @return bool True when the current user can manage these settings.
+	 */
+	private static function is_authorized() {
+		return current_user_can( is_multisite() ? 'manage_network_options' : 'manage_options' );
+	}
+
+	/**
+	 * Verify that upgrader hook data targets this plugin.
+	 *
+	 * @param array $options Upgrader hook data.
+	 * @return bool True for this plugin's install or update event.
+	 */
+	private static function is_this_plugin_upgrade( $options ) {
+		if ( ! is_array( $options ) || ! isset( $options['action'], $options['type'] ) || ! in_array( $options['action'], [ 'install', 'update' ], true ) || 'plugin' !== $options['type'] ) {
+			return false;
+		}
+		$plugins = [];
+		if ( isset( $options['plugin'] ) && is_string( $options['plugin'] ) ) {
+			$plugins[] = $options['plugin'];
+		}
+		if ( isset( $options['plugins'] ) && is_array( $options['plugins'] ) ) {
+			$plugins = array_merge( $plugins, $options['plugins'] );
+		}
+		return in_array( plugin_basename( APCM_PLUGIN_FILE ), $plugins, true );
+	}
+
+	/**
+	 * Run the migration when it is pending and within its retry budget.
+	 *
+	 * @return bool|string True when current, false on failure, or a status constant.
+	 */
+	private static function migrate_if_needed() {
+		if ( self::is_current() ) {
 			return true;
+		}
+		if ( self::needs_manual_repair() ) {
+			return self::MANUAL_REPAIR;
 		}
 		$schema = new self();
 		return $schema->run_migration();
@@ -164,25 +222,39 @@ class Schema {
 	/**
 	 * Create or migrate the analytics schema.
 	 *
-	 * @return bool True when the schema version was stored, false otherwise.
+	 * @return bool|string True when current, false on failure, or a status constant.
 	 * @since 4.6.2
 	 */
 	private function run_migration() {
+		global $wpdb;
+		$lock_query = $wpdb->prepare( 'SELECT GET_LOCK(%s, 0)', self::MIGRATION_LOCK );
+		$lock       = is_string( $lock_query ) ? $wpdb->get_var( $lock_query ) : false;
+		if ( '1' !== (string) $lock ) {
+			return self::BUSY;
+		}
 		try {
 			$this->create_tables();
 			if ( ! $this->migrate_existing_tables() ) {
-				return false;
+				throw new \RuntimeException( 'existing table migration' );
 			}
 			Option::network_set( 'schema_version', self::VERSION );
 			if ( self::VERSION !== (string) Option::network_get( 'schema_version' ) ) {
-				\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( 'Schema migration failed while storing its version.' );
-				return false;
+				throw new \RuntimeException( 'schema version storage' );
 			}
+			Option::network_set( 'schema_migration_attempts', 0 );
 			\DecaLog\Engine::eventsLogger( APCM_SLUG )->info( 'Schema updated.' );
 			return true;
 		} catch ( \Throwable $e ) {
-			\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( sprintf( 'Schema migration failed with %s at %s:%d.', get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
-			return false;
+			$attempts = min( self::MAX_MIGRATION_ATTEMPTS, (int) Option::network_get( 'schema_migration_attempts' ) + 1 );
+			Option::network_set( 'schema_migration_attempts', $attempts );
+			$stage = $e instanceof \RuntimeException ? $e->getMessage() : 'unexpected throwable';
+			\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( sprintf( 'Schema migration failed: stage=%s exception=%s at %s:%d.', $stage, get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
+			return self::MAX_MIGRATION_ATTEMPTS <= $attempts ? self::MANUAL_REPAIR : false;
+		} finally {
+			$release_query = $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', self::MIGRATION_LOCK );
+			if ( is_string( $release_query ) ) {
+				$wpdb->get_var( $release_query );
+			}
 		}
 	}
 
@@ -264,17 +336,44 @@ class Schema {
 		global $wpdb;
 		$statistics = $wpdb->base_prefix . self::$statistics;
 		$details    = $wpdb->base_prefix . self::$details;
-		$sql        = 'ALTER TABLE `' . $statistics . '` MODIFY `timestamp` datetime NOT NULL';
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table name is a plugin-owned constant.
-		if ( false === $wpdb->query( $sql ) ) {
-			return $this->migration_failed( 'statistics timestamp migration' );
-		}
-		$sql = 'ALTER TABLE `' . $details . '` MODIFY `timestamp` datetime NOT NULL';
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table name is a plugin-owned constant.
-		if ( false === $wpdb->query( $sql ) ) {
-			return $this->migration_failed( 'details timestamp migration' );
+		if ( ! $this->migrate_timestamp_column( $statistics, 'statistics' ) || ! $this->migrate_timestamp_column( $details, 'details' ) ) {
+			return false;
 		}
 		return $this->migrate_details_primary_key( $details );
+	}
+
+	/**
+	 * Repair legacy zero dates and enforce the current timestamp definition.
+	 *
+	 * @param string $table Fully prefixed table name.
+	 * @param string $label Static table label for failure reporting.
+	 * @return bool True on success.
+	 */
+	private function migrate_timestamp_column( $table, $label ) {
+		global $wpdb;
+		$sql = $wpdb->prepare( 'UPDATE `' . $table . '` SET `timestamp` = %s WHERE `timestamp` = %s', '1970-01-01 00:00:01', '0000-00-00 00:00:00' );
+		if ( ! is_string( $sql ) ) {
+			return $this->migration_failed( $label . ' zero-date query preparation' );
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- values are prepared above and the table is plugin-owned.
+		if ( false === $wpdb->query( $sql ) ) {
+			return $this->migration_failed( $label . ' zero-date repair' );
+		}
+		$sql = 'SHOW COLUMNS FROM `' . $table . "` LIKE 'timestamp'";
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and column names are plugin-owned constants.
+		$column = $wpdb->get_row( $sql, ARRAY_A );
+		if ( ! is_array( $column ) ) {
+			return $this->migration_failed( $label . ' timestamp inspection' );
+		}
+		if ( isset( $column['Null'] ) && 'NO' === $column['Null'] && array_key_exists( 'Default', $column ) && null === $column['Default'] ) {
+			return true;
+		}
+		$sql = 'ALTER TABLE `' . $table . '` MODIFY `timestamp` datetime NOT NULL';
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and column names are plugin-owned constants.
+		if ( false === $wpdb->query( $sql ) ) {
+			return $this->migration_failed( $label . ' timestamp migration' );
+		}
+		return true;
 	}
 
 	/**
@@ -315,30 +414,46 @@ class Schema {
 			return true;
 		}
 
-		$sql = 'SELECT `timestamp`, `id`, COUNT(*) AS `duplicate_count` FROM `' . $table . '` GROUP BY `timestamp`, `id` HAVING COUNT(*) > 1';
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table name is a plugin-owned constant.
-		$duplicates = $wpdb->get_results( $sql, ARRAY_A );
-		if ( ! is_array( $duplicates ) ) {
-			return $this->migration_failed( 'details duplicate inspection' );
+		$temporary_primary = false;
+		if ( [] === $primary_columns ) {
+			$sql = 'SHOW COLUMNS FROM `' . $table . "` LIKE 'apcm_migration_id'";
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and column names are fixed.
+			$temporary_column = $wpdb->get_row( $sql, ARRAY_A );
+			if ( ! is_array( $temporary_column ) ) {
+				$sql = 'ALTER TABLE `' . $table . '` ADD COLUMN `apcm_migration_id` bigint UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY';
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and column names are fixed.
+				if ( false === $wpdb->query( $sql ) ) {
+					return $this->migration_failed( 'details temporary primary key creation' );
+				}
+			} else {
+				$sql = 'ALTER TABLE `' . $table . '` ADD PRIMARY KEY (`apcm_migration_id`)';
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and column names are fixed.
+				if ( false === $wpdb->query( $sql ) ) {
+					return $this->migration_failed( 'details temporary primary key recovery' );
+				}
+			}
+			$primary_columns   = [ 'apcm_migration_id' ];
+			$temporary_primary = true;
+		} elseif ( [ 'apcm_migration_id' ] === $primary_columns ) {
+			$temporary_primary = true;
+		} elseif ( [ 'timestamp' ] !== $primary_columns ) {
+			return $this->migration_failed( 'details unsupported primary key' );
 		}
-		foreach ( $duplicates as $duplicate ) {
-			$delete_count = (int) $duplicate['duplicate_count'] - 1;
-			if ( 0 < $delete_count ) {
-				$sql = $wpdb->prepare( 'DELETE FROM `' . $table . '` WHERE `timestamp` = %s AND `id` = %s LIMIT %d', $duplicate['timestamp'], $duplicate['id'], $delete_count );
-				if ( ! is_string( $sql ) ) {
-					return $this->migration_failed( 'details duplicate query preparation' );
-				}
-				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- values are prepared above.
-				$deleted = $wpdb->query( $sql );
-				if ( false === $deleted || $delete_count !== (int) $deleted ) {
-					return $this->migration_failed( 'details duplicate resolution' );
-				}
+
+		if ( $temporary_primary ) {
+			$sql = 'DELETE loser FROM `' . $table . '` AS loser INNER JOIN `' . $table . '` AS winner ON loser.`timestamp` = winner.`timestamp` AND loser.`id` = winner.`id` AND loser.`apcm_migration_id` > winner.`apcm_migration_id`';
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- table and column names are fixed.
+			if ( false === $wpdb->query( $sql ) ) {
+				return $this->migration_failed( 'details duplicate resolution' );
 			}
 		}
 
 		$clauses = [];
 		if ( [] !== $primary_columns ) {
 			$clauses[] = 'DROP PRIMARY KEY';
+		}
+		if ( $temporary_primary ) {
+			$clauses[] = 'DROP COLUMN `apcm_migration_id`';
 		}
 		if ( $has_legacy_key ) {
 			$clauses[] = 'DROP INDEX `u_stat`';
@@ -353,15 +468,14 @@ class Schema {
 	}
 
 	/**
-	 * Log a non-fatal migration failure without database contents or errors.
+	 * Mark a non-fatal migration failure without logging database contents.
 	 *
 	 * @param string $stage Static migration stage identifier.
 	 * @return false
 	 * @since 4.6.2
 	 */
 	private function migration_failed( $stage ) {
-		\DecaLog\Engine::eventsLogger( APCM_SLUG )->alert( sprintf( 'Schema migration aborted during %s.', $stage ) );
-		return false;
+		throw new \RuntimeException( $stage );
 	}
 
 	/**

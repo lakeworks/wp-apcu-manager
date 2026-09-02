@@ -9,7 +9,6 @@
 
 namespace APCuManager\Plugin;
 
-use APCuManager\Plugin\Feature\Schema;
 use APCuManager\System\APCu;
 
 /**
@@ -29,8 +28,6 @@ class Activator {
 	 * @since 1.0.0
 	 */
 	public static function activate() {
-		$schema = new Schema();
-		$schema->initialize();
 		APCu::reset();
 	}
 

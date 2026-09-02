@@ -23,6 +23,7 @@ use PerfOpsOne\Menus;
 use PerfOpsOne\AdminBar;
 use APCuManager\System\APCu;
 use APCuManager\System\Dropin;
+use APCuManager\Plugin\Feature\Schema;
 
 /**
  * The admin-specific functionality of the plugin.
@@ -268,6 +269,10 @@ class Apcu_Manager_Admin {
 	 * @since 1.0.0
 	 */
 	public function get_settings_page() {
+		$migration_result = Schema::maybe_migrate_from_settings();
+		if ( Schema::MANUAL_REPAIR === $migration_result || Schema::needs_manual_repair() ) {
+			add_settings_error( 'apcm_schema_manual_repair', '', esc_html__( 'The APCu Manager analytics schema could not be migrated automatically. Manual repair is required.', 'apcu-manager' ), 'error' );
+		}
 		if ( ! ( $tab = filter_input( INPUT_GET, 'tab' ) ) ) {
 			$tab = filter_input( INPUT_POST, 'tab' );
 		}

@@ -76,7 +76,7 @@ class Environment {
 			$id = 5;
 		} elseif ( $req_uri ? 0 === strpos( strtolower( $req_uri ), '/feed/' ) : false ) {
 			$id = 6;
-		} elseif ( is_admin() ) {
+		} elseif ( defined( 'WP_ADMIN' ) && WP_ADMIN ) {
 			$id = 7;
 		} else {
 			$id = 8;

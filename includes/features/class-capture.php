@@ -216,6 +216,9 @@ class Capture {
 	 * @since    1.0.0
 	 */
 	public static function check() {
+		if ( ! Schema::is_current() ) {
+			return false;
+		}
 		$schema = new Schema();
 		$record = $schema->init_record();
 		$time   = time();

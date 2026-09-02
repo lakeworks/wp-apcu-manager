@@ -38,7 +38,8 @@ class Dropin {
 	 * @return string One of the lifecycle result constants.
 	 */
 	public static function apply_admin_change( $enabled ) {
-		if ( ! is_admin() ) {
+		$capability = is_multisite() ? 'manage_network_options' : 'manage_options';
+		if ( ! current_user_can( $capability ) ) {
 			return self::FAILED;
 		}
 		return self::sync( (bool) $enabled );
