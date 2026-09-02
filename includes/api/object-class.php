@@ -1208,22 +1208,16 @@ class WP_Object_Cache {
 		if ( ! $this->has_operational_apcu() ) {
 			return $replace ? $this->replace_non_persistent( $key, $var ) : $this->set_non_persistent( $key, $var );
 		}
-		if ( $replace && ! apcu_exists( $key ) ) {
-			if ( ! $this->has_operational_apcu() ) {
-				return $this->replace_non_persistent( $key, $var );
-			}
-			$this->metrics['replace']['fail'] += 1;
-			return false;
-		}
 		if ( is_object( $var ) ) {
 			$var = clone $var;
 		}
 		$op                            = $replace ? 'replace' : 'set';
 		$op_name                       = $replace ? 'replaced' : 'set';
 		$chrono                        = microtime( true );
-		$success                       = apcu_store( $key, $var, max( (int) $ttl, 0 ) );
+		$replace_exists                = ! $replace || apcu_exists( $key );
+		$success                       = $replace ? ( $replace_exists ? apcu_store( $key, $var, max( (int) $ttl, 0 ) ) : false ) : apcu_store( $key, $var, max( (int) $ttl, 0 ) );
 		$this->metrics[ $op ]['time'] += microtime( true ) - $chrono;
-		if ( ! $success && ! $this->has_operational_apcu() ) {
+		if ( ! $success && ( ! $replace || ! $replace_exists ) && ! $this->has_operational_apcu() ) {
 			return $replace ? $this->replace_non_persistent( $key, $var ) : $this->set_non_persistent( $key, $var );
 		}
 		if ( $success ) {
