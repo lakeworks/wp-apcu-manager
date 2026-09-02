@@ -89,11 +89,11 @@ class WP_Object_Cache {
 	private $non_persistent_cache = [];
 
 	/**
-	 * Whether the degraded-store limit was logged this request.
+	 * Degraded request-local cache keys in FIFO order.
 	 *
-	 * @var bool
+	 * @var array
 	 */
-	private $degraded_limit_logged = false;
+	private $degraded_cache_keys = [];
 
 	/**
 	 * Prefix used for all groups.
@@ -552,13 +552,13 @@ class WP_Object_Cache {
 	 */
 	private function has_operational_apcu() {
 		if ( $this->apcu_available && ! APCu::is_operational() ) {
+			$this->apcu_available = false;
 			foreach ( $this->local_cache as $key => $value ) {
 				if ( ! array_key_exists( $key, $this->non_persistent_cache ) && ! $this->set_non_persistent( $key, $value ) ) {
 					break;
 				}
 			}
-			$this->local_cache    = [];
-			$this->apcu_available = false;
+			$this->local_cache = [];
 		}
 		return $this->apcu_available;
 	}
@@ -570,6 +570,7 @@ class WP_Object_Cache {
 	 */
 	public function flush() {
 		$this->non_persistent_cache = [];
+		$this->degraded_cache_keys  = [];
 		$result = $this->partial_flush_persistent( [ 'wordpress' . $this->cache_prefix ] );
 		$this->flush_runtime();
 		if ( false === $result ) {
@@ -698,6 +699,7 @@ class WP_Object_Cache {
 			foreach ( $seeds as $prefix ) {
 				if ( 0 === strpos( $key, $prefix ) ) {
 					unset( $this->non_persistent_cache[ $key ] );
+					unset( $this->degraded_cache_keys[ $key ] );
 					$cpt ++;
 					break;
 				}
@@ -1029,6 +1031,7 @@ class WP_Object_Cache {
 	private function delete_non_persistent( $key ) {
 		if ( array_key_exists( $key, $this->non_persistent_cache ) ) {
 			unset( $this->non_persistent_cache[ $key ] );
+			unset( $this->degraded_cache_keys[ $key ] );
 			return true;
 		}
 		return false;
@@ -1274,12 +1277,13 @@ class WP_Object_Cache {
 	 * @since   3.0.0
 	 */
 	private function set_non_persistent( $key, $var ) {
-		if ( ! array_key_exists( $key, $this->non_persistent_cache ) && APCU_DEGRADED_MAX_ENTRIES <= count( $this->non_persistent_cache ) ) {
-			if ( ! $this->degraded_limit_logged ) {
-				$this->degraded_limit_logged = true;
-				error_log( sprintf( 'APCu Manager degraded cache full: limit=%d at %s:%d.', APCU_DEGRADED_MAX_ENTRIES, basename( __FILE__ ), __LINE__ ) );
+		if ( ! $this->apcu_available && ! array_key_exists( $key, $this->degraded_cache_keys ) ) {
+			if ( APCU_DEGRADED_MAX_ENTRIES <= count( $this->degraded_cache_keys ) ) {
+				$oldest_key = array_key_first( $this->degraded_cache_keys );
+				unset( $this->degraded_cache_keys[ $oldest_key ] );
+				unset( $this->non_persistent_cache[ $oldest_key ] );
 			}
-			return false;
+			$this->degraded_cache_keys[ $key ] = true;
 		}
 		if ( is_object( $var ) ) {
 			$var = clone $var;

@@ -49,6 +49,13 @@ require_once __DIR__ . '/../includes/api/object-class.php';
 
 $cache = WP_Object_Cache::instance();
 
+$cache->add_non_persistent_groups( 'runtime' );
+for ( $i = 1; $i <= APCU_DEGRADED_MAX_ENTRIES + 1; $i++ ) {
+	apcm_expect( true === $cache->set( 'healthy-' . $i, $i, 'runtime' ), 'healthy non-persistent groups are not capped' );
+}
+$success = null;
+apcm_expect( 1 === $cache->get( 'healthy-1', 'runtime', false, $success ) && true === $success, 'healthy non-persistent oldest entry remains readable past degraded cap' );
+
 apcm_expect( true === $cache->set( 'before-flip', 'local-before-flip' ), 'persistent set succeeds before flip' );
 apcm_expect( 1 === count( $apcm_shared_cache ), 'pre-flip set reaches the shared cache' );
 
@@ -80,9 +87,14 @@ apcm_expect( true === $cache->delete( 'after-flip' ), 'delete removes an existin
 apcm_expect( false === $cache->delete( 'after-flip' ), 'delete rejects a missing key' );
 apcm_expect( true === $cache->set( 'cap-fill-1', 'one' ), 'degraded store accepts entries below its cap' );
 apcm_expect( true === $cache->set( 'cap-fill-2', 'two' ), 'degraded store accepts its final entry' );
-apcm_expect( false === $cache->set( 'cap-overflow', 'dropped' ), 'degraded store rejects a new key at its cap' );
+apcm_expect( true === $cache->set( 'cap-overflow', 'newest' ), 'degraded store accepts a new key past its cap' );
 $success = null;
-apcm_expect( false === $cache->get( 'cap-overflow', 'default', false, $success ) && false === $success, 'rejected degraded key remains a cache miss' );
+apcm_expect( 'newest' === $cache->get( 'cap-overflow', 'default', false, $success ) && true === $success, 'newest degraded key is readable past the cap' );
+$success = null;
+apcm_expect( false === $cache->get( 'before-flip', 'default', false, $success ) && false === $success, 'oldest degraded key is evicted first' );
+apcm_expect( true === $cache->add( 'cap-added', 'added-past-cap' ), 'degraded add succeeds for a new key past the cap' );
+$success = null;
+apcm_expect( 'added-past-cap' === $cache->get( 'cap-added', 'default', false, $success ) && true === $success, 'new degraded add is readable past the cap' );
 apcm_expect( true === $cache->set( 'counter', 9 ), 'degraded store updates an existing key at its cap' );
 $success = null;
 apcm_expect( 9 === $cache->get( 'counter', 'default', false, $success ) && true === $success, 'existing degraded key keeps overwrite semantics at cap' );
