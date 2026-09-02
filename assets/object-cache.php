@@ -21,21 +21,15 @@ $plugin_file     = $plugin_dir . '/apcu-manager.php';
 $handler_file    = $plugin_dir . '/includes/api/object-class.php';
 $apcu_file       = $plugin_dir . '/includes/system/class-apcu.php';
 $apcm_guard_fail = static function ( $condition ) {
-	static $logged = false;
-	if ( ! $logged ) {
-		error_log( sprintf( 'APCu Manager drop-in unavailable: condition=%s at %s:%d.', $condition, basename( __FILE__ ), __LINE__ ) );
-		$logged = true;
-	}
+	error_log( sprintf( 'APCu Manager drop-in unavailable: condition=%s at %s:%d.', $condition, basename( __FILE__ ), __LINE__ ) );
 };
 
 try {
 	$apcm_apcu_enabled = function_exists( 'apcu_enabled' ) && apcu_enabled();
 } catch ( \Throwable $e ) {
-	$apcm_guard_fail( 'apcu_enabled_exception' );
 	return;
 }
 if ( ! $apcm_apcu_enabled ) {
-	$apcm_guard_fail( 'apcu_disabled' );
 	return;
 }
 if ( ! is_file( $handler_file ) || ! is_readable( $handler_file ) ) {
