@@ -57,7 +57,7 @@ class APCu {
 	 * @since 4.6.2
 	 */
 	public static function is_operational() {
-		if ( null === self::$operational ) {
+		if ( null === self::$operational || self::$operational ) {
 			self::$operational = function_exists( 'apcu_enabled' ) && apcu_enabled();
 		}
 		return self::$operational;

@@ -545,9 +545,26 @@ class WP_Object_Cache {
 	}
 
 	/**
+	 * Check APCu and preserve the current request's local mirror if it degrades.
+	 *
+	 * @return bool True while the shared cache remains operational.
+	 */
+	private function has_operational_apcu() {
+		if ( $this->apcu_available && ! APCu::is_operational() ) {
+			foreach ( $this->local_cache as $key => $value ) {
+				if ( ! array_key_exists( $key, $this->non_persistent_cache ) ) {
+					$this->non_persistent_cache[ $key ] = $value;
+				}
+			}
+			$this->apcu_available = false;
+		}
+		return $this->apcu_available;
+	}
+
+	/**
 	 * Clears the object cache of all data.
 	 *
-	 * @return bool Always returns true.
+	 * @return bool True on a complete shared-cache sweep, false when unavailable or incomplete.
 	 */
 	public function flush() {
 		$this->non_persistent_cache = [];
@@ -620,73 +637,39 @@ class WP_Object_Cache {
 	}
 
 	/**
-	 * Get a keys list.
-	 *
-	 * @param array $needles The fragment key name.
-	 * @return array|false The list of full key names, or false when APCu is unavailable.
-	 * @since   4.6.0
-	 */
-	private function list( $needles = [] ) {
-		$result  = [];
-		$regexps = [];
-		if ( [] === $needles ) {
-			$regexps = ['/.*/'];
-		} else {
-			foreach ( $needles as $needle ) {
-				$regexps[] = '/' . preg_quote( $needle, '/' ) . '/';
-			}
-		}
-		if ( ! APCu::is_operational() || ! class_exists( '\APCUIterator' ) ) {
-			return false;
-		}
-		try {
-			foreach ( $regexps as $regexp ) {
-				foreach ( new \APCUIterator( $regexp, APC_ITER_KEY, APCU_ITERATOR_MAX_CHUNCK_SIZE, APC_LIST_ACTIVE ) as $object ) {
-					$result[] = $object['key'];
-				}
-			}
-		} catch ( \Throwable $e ) {
-			if ( isset( self::$events_logger ) ) {
-				self::$events_logger->error( self::$events_prefix . sprintf( 'APCu enumeration failed with %s at %s:%d.', get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
-			}
-			return false;
-		}
-
-		return $result;
-	}
-
-	/**
 	 * Remove specific data from persistent cache.
 	 *
 	 * @param array $seeds The seeds to remove.
 	 *
-	 * @return  integer|false Number of removed keys, or false when APCu is unavailable.
+	 * @return bool True when the sweep completed, false when APCu is unavailable or incomplete.
 	 */
 	private function partial_flush_persistent( $seeds ) {
-		$cpt = 0;
 		$chrono = microtime( true );
-		for ( $i = 1; $i <= APCU_ITERATOR_MAX_LOOP; $i++ ) {
-			$objects = $this->list( $seeds );
-			if ( false === $objects ) {
-				return false;
-			}
-			if ( 0 === count( $objects ) ) {
-				break;
-			}
-			foreach ( $objects as $object ) {
-				if ( $this->delete_persistent( $object, false ) ) {
-					$this->metrics['flush']['success'] += 1;
-					$cpt ++;
-				} else {
+		if ( ! $this->has_operational_apcu() || ! class_exists( '\APCUIterator' ) ) {
+			error_log( sprintf( 'APCu Manager flush incomplete: condition=apcu_unavailable at %s:%d.', basename( __FILE__ ), __LINE__ ) );
+			return false;
+		}
+		try {
+			foreach ( $seeds as $seed ) {
+				$iterator = new \APCUIterator( '/' . preg_quote( $seed, '/' ) . '/', APC_ITER_KEY, APCU_ITERATOR_MAX_CHUNCK_SIZE, APC_LIST_ACTIVE );
+				if ( true !== apcu_delete( $iterator ) ) {
 					$this->metrics['flush']['fail'] += 1;
+					error_log( sprintf( 'APCu Manager flush incomplete: condition=iterator_delete_failed at %s:%d.', basename( __FILE__ ), __LINE__ ) );
+					return false;
 				}
+				$this->metrics['flush']['success'] += 1;
 			}
+		} catch ( \Throwable $e ) {
+			$this->metrics['flush']['fail'] += 1;
+			error_log( sprintf( 'APCu Manager flush incomplete: condition=iterator_exception exception=%s at %s:%d.', get_class( $e ), basename( $e->getFile() ), $e->getLine() ) );
+			return false;
+		}
+		if ( ! $this->has_operational_apcu() ) {
+			error_log( sprintf( 'APCu Manager flush incomplete: condition=apcu_became_unavailable at %s:%d.', basename( __FILE__ ), __LINE__ ) );
+			return false;
 		}
 		$this->metrics['flush']['time'] += microtime( true ) - $chrono;
-		if ( self::$debug ) {
-			self::$events_logger->debug( self::$events_prefix . sprintf( '%d keys removed in a flush operation.', $cpt ) );
-		}
-		return $cpt;
+		return true;
 	}
 
 	/**
@@ -737,11 +720,8 @@ class WP_Object_Cache {
 			return false;
 		}
 		$key = $this->full_item_name( $key, $group );
-		if ( $this->is_non_persistent_group( $group ) ) {
+		if ( $this->is_non_persistent_group( $group ) || ! $this->has_operational_apcu() ) {
 			return $this->add_non_persistent( $key, $var );
-		}
-		if ( ! $this->apcu_available ) {
-			return false;
 		}
 		return $this->add_persistent( $key, $var, $ttl );
 	}
@@ -757,12 +737,15 @@ class WP_Object_Cache {
 	 * @since   3.0.0
 	 */
 	private function add_persistent( $key, $var, $ttl ) {
-		if ( ! APCu::is_operational() ) {
-			return false;
+		if ( ! $this->has_operational_apcu() ) {
+			return $this->add_non_persistent( $key, $var );
 		}
 		$chrono                        = microtime( true );
 		$result                        = true === apcu_add( $key, $var, max( (int) $ttl, 0 ) );
 		$this->metrics['add']['time'] += microtime( true ) - $chrono;
+		if ( ! $result && ! $this->has_operational_apcu() ) {
+			return $this->add_non_persistent( $key, $var );
+		}
 		if ( $result ) {
 			$this->local_cache[ $key ] = is_object( $var ) ? clone $var : $var;
 			if ( $this::$debug ) {
@@ -809,11 +792,8 @@ class WP_Object_Cache {
 	 */
 	public function decr( $key, $offset = 1, $group = 'default' ) {
 		$key = $this->full_item_name( $key, $group );
-		if ( $this->is_non_persistent_group( $group ) ) {
+		if ( $this->is_non_persistent_group( $group ) || ! $this->has_operational_apcu() ) {
 			return $this->decr_non_persistent( $key, $offset );
-		}
-		if ( ! $this->apcu_available ) {
-			return false;
 		}
 		return $this->decr_persistent( $key, $offset );
 	}
@@ -828,18 +808,24 @@ class WP_Object_Cache {
 	 * @since   3.0.0
 	 */
 	private function decr_persistent( $key, $offset ) {
-		if ( ! APCu::is_operational() ) {
-			return false;
+		if ( ! $this->has_operational_apcu() ) {
+			return $this->decr_non_persistent( $key, $offset );
 		}
 		$this->get_persistent( $key, $success );
+		if ( ! $this->has_operational_apcu() ) {
+			return $this->decr_non_persistent( $key, $offset );
+		}
 		if ( ! $success ) {
 			$this->metrics['dec']['fail'] += 1;
 			return false;
 		}
 		$chrono                       = microtime( true );
-		$result                       = false !== apcu_dec( $key, max( (int) $offset, 0 ) );
+		$result                       = apcu_dec( $key, max( (int) $offset, 0 ) );
 		$this->metrics['dec']['time'] += microtime( true ) - $chrono;
-		if ( $result ) {
+		if ( false === $result && ! $this->has_operational_apcu() ) {
+			return $this->decr_non_persistent( $key, $offset );
+		}
+		if ( is_int( $result ) ) {
 			$this->local_cache[ $key ] = $result;
 			if ( $this::$debug ) {
 				$this->metrics['dec']['size'] += $this->size_of( $offset );
@@ -874,7 +860,7 @@ class WP_Object_Cache {
 		$var    = $this->get_non_persitent( $key );
 		$var    = is_numeric( $var ) ? $var : 0;
 		$var    -= $offset;
-		return $this->set_non_persistent( $key, $var );
+		return $this->set_non_persistent( $key, $var ) ? $var : false;
 	}
 
 	/**
@@ -889,11 +875,8 @@ class WP_Object_Cache {
 	 */
 	public function incr( $key, $offset = 1, $group = 'default' ) {
 		$key = $this->full_item_name( $key, $group );
-		if ( $this->is_non_persistent_group( $group ) ) {
+		if ( $this->is_non_persistent_group( $group ) || ! $this->has_operational_apcu() ) {
 			return $this->incr_non_persistent( $key, $offset );
-		}
-		if ( ! $this->apcu_available ) {
-			return false;
 		}
 		return $this->incr_persistent( $key, $offset );
 	}
@@ -908,18 +891,24 @@ class WP_Object_Cache {
 	 * @since   3.0.0
 	 */
 	private function incr_persistent( $key, $offset ) {
-		if ( ! APCu::is_operational() ) {
-			return false;
+		if ( ! $this->has_operational_apcu() ) {
+			return $this->incr_non_persistent( $key, $offset );
 		}
 		$this->get_persistent( $key, $success );
+		if ( ! $this->has_operational_apcu() ) {
+			return $this->incr_non_persistent( $key, $offset );
+		}
 		if ( ! $success ) {
 			$this->metrics['inc']['fail'] += 1;
 			return false;
 		}
 		$chrono                       = microtime( true );
-		$result                       = false !== apcu_inc( $key, max( (int) $offset, 0 ) );
+		$result                       = apcu_inc( $key, max( (int) $offset, 0 ) );
 		$this->metrics['inc']['time'] += microtime( true ) - $chrono;
-		if ( $result ) {
+		if ( false === $result && ! $this->has_operational_apcu() ) {
+			return $this->incr_non_persistent( $key, $offset );
+		}
+		if ( is_int( $result ) ) {
 			$this->local_cache[ $key ] = $result;
 			if ( $this::$debug ) {
 				$this->metrics['inc']['size'] += $this->size_of( $offset );
@@ -954,7 +943,7 @@ class WP_Object_Cache {
 		$var    = $this->get_non_persitent( $key );
 		$var    = is_numeric( $var ) ? $var : 0;
 		$var    += $offset;
-		return $this->set_non_persistent( $key, $var );
+		return $this->set_non_persistent( $key, $var ) ? $var : false;
 	}
 
 	/**
@@ -968,11 +957,8 @@ class WP_Object_Cache {
 	 */
 	public function delete( $key, $group = 'default' ) {
 		$key = $this->full_item_name( $key, $group );
-		if ( $this->is_non_persistent_group( $group ) ) {
+		if ( $this->is_non_persistent_group( $group ) || ! $this->has_operational_apcu() ) {
 			return $this->delete_non_persistent( $key );
-		}
-		if ( ! $this->apcu_available ) {
-			return false;
 		}
 		return $this->delete_persistent( $key );
 	}
@@ -987,13 +973,16 @@ class WP_Object_Cache {
 	 * @since   3.0.0
 	 */
 	private function delete_persistent( $key, $single = true ) {
-		if ( ! APCu::is_operational() ) {
-			return false;
+		if ( ! $this->has_operational_apcu() ) {
+			return $this->delete_non_persistent( $key );
 		}
 		if ( $single ) {
 			$chrono = microtime( true );
 		}
 		$result = true === apcu_delete( $key );
+		if ( ! $result && ! $this->has_operational_apcu() ) {
+			return $this->delete_non_persistent( $key );
+		}
 		if ( $single ) {
 			$this->metrics['delete']['time'] += microtime( true ) - $chrono;
 		}
@@ -1070,13 +1059,9 @@ class WP_Object_Cache {
 			}
 		}
 		$key = $this->full_item_name( $key, $group );
-		if ( $this->is_non_persistent_group( $group ) ) {
+		if ( $this->is_non_persistent_group( $group ) || ! $this->has_operational_apcu() ) {
 			$var = $this->get_non_persitent( $key, $success );
 			return $var;
-		}
-		if ( ! $this->apcu_available ) {
-			$success = false;
-			return false;
 		}
 		return $this->get_persistent( $key, $success, $force );
 	}
@@ -1093,9 +1078,8 @@ class WP_Object_Cache {
 	 * @since   3.0.0
 	 */
 	private function get_persistent( $key, &$success = null, $force = false ) {
-		if ( ! APCu::is_operational() ) {
-			$success = false;
-			return false;
+		if ( ! $this->has_operational_apcu() ) {
+			return $this->get_non_persitent( $key, $success );
 		}
 		if ( ! $force && array_key_exists( $key, $this->local_cache ) ) {
 			$success = true;
@@ -1104,6 +1088,9 @@ class WP_Object_Cache {
 			$chrono                         = microtime( true );
 			$var                            = apcu_fetch( $key, $success );
 			$this->metrics['fetch']['time'] += microtime( true ) - $chrono;
+			if ( ! $success && ! $this->has_operational_apcu() ) {
+				return $this->get_non_persitent( $key, $success );
+			}
 			if ( $success ) {
 				$this->local_cache[ $key ] = $var;
 				if ( $this::$debug ) {
@@ -1165,11 +1152,8 @@ class WP_Object_Cache {
 	 */
 	public function replace( $key, $var, $group = 'default', $ttl = 0 ) {
 		$key = $this->full_item_name( $key, $group );
-		if ( $this->is_non_persistent_group( $group ) ) {
+		if ( $this->is_non_persistent_group( $group ) || ! $this->has_operational_apcu() ) {
 			return $this->replace_non_persistent( $key, $var );
-		}
-		if ( ! $this->apcu_available ) {
-			return false;
 		}
 		return $this->replace_persistent( $key, $var, $ttl );
 	}
@@ -1185,11 +1169,6 @@ class WP_Object_Cache {
 	 * @since   3.0.0
 	 */
 	private function replace_persistent( $key, $var, $ttl ) {
-		$this->get_persistent( $key, $success );
-		if ( ! $success ) {
-			$this->metrics['replace']['fail'] += 1;
-			return false;
-		}
 		return $this->set_persistent( $key, $var, $ttl, true );
 	}
 
@@ -1221,11 +1200,8 @@ class WP_Object_Cache {
 	 */
 	public function set( $key, $var, $group = 'default', $ttl = 0 ) {
 		$key = $this->full_item_name( $key, $group );
-		if ( $this->is_non_persistent_group( $group ) ) {
+		if ( $this->is_non_persistent_group( $group ) || ! $this->has_operational_apcu() ) {
 			return $this->set_non_persistent( $key, $var );
-		}
-		if ( ! $this->apcu_available ) {
-			return false;
 		}
 		return $this->set_persistent( $key, $var, $ttl );
 	}
@@ -1242,7 +1218,14 @@ class WP_Object_Cache {
 	 * @since   3.0.0
 	 */
 	private function set_persistent( $key, $var, $ttl, $replace = false ) {
-		if ( ! APCu::is_operational() ) {
+		if ( ! $this->has_operational_apcu() ) {
+			return $replace ? $this->replace_non_persistent( $key, $var ) : $this->set_non_persistent( $key, $var );
+		}
+		if ( $replace && ! apcu_exists( $key ) ) {
+			if ( ! $this->has_operational_apcu() ) {
+				return $this->replace_non_persistent( $key, $var );
+			}
+			$this->metrics['replace']['fail'] += 1;
 			return false;
 		}
 		if ( is_object( $var ) ) {
@@ -1253,6 +1236,9 @@ class WP_Object_Cache {
 		$chrono                        = microtime( true );
 		$success                       = apcu_store( $key, $var, max( (int) $ttl, 0 ) );
 		$this->metrics[ $op ]['time'] += microtime( true ) - $chrono;
+		if ( ! $success && ! $this->has_operational_apcu() ) {
+			return $replace ? $this->replace_non_persistent( $key, $var ) : $this->set_non_persistent( $key, $var );
+		}
 		if ( $success ) {
 			$this->local_cache[ $key ] = $var;
 			if ( $this::$debug ) {
