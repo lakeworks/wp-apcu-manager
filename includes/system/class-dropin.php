@@ -94,6 +94,15 @@ class Dropin {
 	}
 
 	/**
+	 * Deploy the managed drop-in from lifecycle paths outside wp-admin.
+	 *
+	 * @return string One of the lifecycle result constants.
+	 */
+	public static function deploy_managed() {
+		return self::sync( true );
+	}
+
+	/**
 	 * Remove the managed drop-in from lifecycle paths outside wp-admin.
 	 *
 	 * @return string One of the lifecycle result constants.

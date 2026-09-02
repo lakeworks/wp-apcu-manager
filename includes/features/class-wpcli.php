@@ -39,6 +39,8 @@ class Wpcli {
 		1   => 'unrecognized setting.',
 		2   => 'unrecognized action.',
 		3   => 'analytics are disabled.',
+		4   => 'object-cache drop-in deployment failed.',
+		5   => 'object-cache drop-in removal failed.',
 		255 => 'unknown error.',
 	];
 
@@ -266,8 +268,17 @@ class Wpcli {
 						$this->success( 'metrics collation is now activated.', '', $stdout );
 						break;
 					case 'object-caching':
-						Option::network_set( 'earlyloading', true );
-						$this->success( 'WordPress object caching is now activated.', '', $stdout );
+						$dropin_result = Dropin::deploy_managed();
+						if ( Dropin::FAILED === $dropin_result ) {
+							$this->error( 4, $stdout );
+						}
+						if ( in_array( $dropin_result, [ Dropin::DEPLOYED, Dropin::DEPLOYED_WITH_BACKUP ], true ) ) {
+							Option::network_set( 'earlyloading', true );
+							if ( Dropin::DEPLOYED_WITH_BACKUP === $dropin_result ) {
+								$this->warning( 'The previous object-cache drop-in was backed up.', '', $stdout );
+							}
+							$this->success( 'WordPress object caching is now activated.', '', $stdout );
+						}
 						break;
 					default:
 						$this->error( 1, $stdout );
@@ -294,12 +305,12 @@ class Wpcli {
 						\WP_CLI::confirm( 'Are you sure you want to deactivate WordPress object caching?', $assoc_args );
 						$dropin_result = Dropin::remove_managed();
 						if ( Dropin::FAILED === $dropin_result ) {
-							$this->error( 255, $stdout );
+							$this->error( 5, $stdout );
 						}
-						Option::network_set( 'earlyloading', false );
 						if ( Dropin::FOREIGN_LEFT === $dropin_result ) {
 							$this->warning( 'The object-cache drop-in is not managed by APCu Manager and was left untouched.', '', $stdout );
-						} else {
+						} elseif ( in_array( $dropin_result, [ Dropin::REMOVED, Dropin::UNCHANGED ], true ) ) {
+							Option::network_set( 'earlyloading', false );
 							$this->success( 'WordPress object caching is now deactivated.', '', $stdout );
 						}
 						break;
