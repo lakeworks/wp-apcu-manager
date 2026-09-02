@@ -25,6 +25,10 @@ if ( ! defined( 'APCU_ITERATOR_MAX_LOOP' ) ) {
 	define( 'APCU_ITERATOR_MAX_LOOP', 20 );
 }
 
+if ( ! defined( 'APCU_DEGRADED_MAX_ENTRIES' ) ) {
+	define( 'APCU_DEGRADED_MAX_ENTRIES', 5000 );
+}
+
 /**
  * Object cache class definition
  */
@@ -77,6 +81,13 @@ class WP_Object_Cache {
 	 * @since   3.0.0
 	 */
 	private $non_persistent_cache = [];
+
+	/**
+	 * Whether the degraded-store limit was logged this request.
+	 *
+	 * @var bool
+	 */
+	private $degraded_limit_logged = false;
 
 	/**
 	 * Prefix used for all groups.
@@ -536,10 +547,11 @@ class WP_Object_Cache {
 	private function has_operational_apcu() {
 		if ( $this->apcu_available && ! APCu::is_operational() ) {
 			foreach ( $this->local_cache as $key => $value ) {
-				if ( ! array_key_exists( $key, $this->non_persistent_cache ) ) {
-					$this->non_persistent_cache[ $key ] = $value;
+				if ( ! array_key_exists( $key, $this->non_persistent_cache ) && ! $this->set_non_persistent( $key, $value ) ) {
+					break;
 				}
 			}
+			$this->local_cache    = [];
 			$this->apcu_available = false;
 		}
 		return $this->apcu_available;
@@ -1252,6 +1264,13 @@ class WP_Object_Cache {
 	 * @since   3.0.0
 	 */
 	private function set_non_persistent( $key, $var ) {
+		if ( ! array_key_exists( $key, $this->non_persistent_cache ) && APCU_DEGRADED_MAX_ENTRIES <= count( $this->non_persistent_cache ) ) {
+			if ( ! $this->degraded_limit_logged ) {
+				$this->degraded_limit_logged = true;
+				error_log( sprintf( 'APCu Manager degraded cache full: limit=%d at %s:%d.', APCU_DEGRADED_MAX_ENTRIES, basename( __FILE__ ), __LINE__ ) );
+			}
+			return false;
+		}
 		if ( is_object( $var ) ) {
 			$var = clone $var;
 		}

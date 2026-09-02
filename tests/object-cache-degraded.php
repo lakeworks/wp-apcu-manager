@@ -5,6 +5,7 @@
 
 define( 'ABSPATH', __DIR__ . '/' );
 define( 'APCM_DROPIN_VERSION', 'test' );
+define( 'APCU_DEGRADED_MAX_ENTRIES', 5 );
 
 $apcm_apcu_enabled = true;
 $apcm_shared_cache = [];
@@ -77,6 +78,14 @@ $success = null;
 apcm_expect( 'replacement' === $cache->get( 'after-flip', 'default', false, $success ) && true === $success, 'replacement is readable' );
 apcm_expect( true === $cache->delete( 'after-flip' ), 'delete removes an existing key' );
 apcm_expect( false === $cache->delete( 'after-flip' ), 'delete rejects a missing key' );
+apcm_expect( true === $cache->set( 'cap-fill-1', 'one' ), 'degraded store accepts entries below its cap' );
+apcm_expect( true === $cache->set( 'cap-fill-2', 'two' ), 'degraded store accepts its final entry' );
+apcm_expect( false === $cache->set( 'cap-overflow', 'dropped' ), 'degraded store rejects a new key at its cap' );
+$success = null;
+apcm_expect( false === $cache->get( 'cap-overflow', 'default', false, $success ) && false === $success, 'rejected degraded key remains a cache miss' );
+apcm_expect( true === $cache->set( 'counter', 9 ), 'degraded store updates an existing key at its cap' );
+$success = null;
+apcm_expect( 9 === $cache->get( 'counter', 'default', false, $success ) && true === $success, 'existing degraded key keeps overwrite semantics at cap' );
 apcm_expect( false === $cache->flush(), 'flush reports shared cache unavailable' );
 
 fwrite( STDOUT, 'PASS: mid-request APCu flip preserves degraded object-cache contracts' . PHP_EOL );
