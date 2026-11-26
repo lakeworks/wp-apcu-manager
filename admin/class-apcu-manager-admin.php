@@ -588,7 +588,7 @@ class Apcu_Manager_Admin {
 				'text'        => esc_html__( 'Activated', 'apcu-manager' ),
 				'id'          => 'apcm_plugin_features_autopurge_update',
 				'checked'     => $apcu_available ? Option::network_get( 'autopurge_update' ) : false,
-				'description' => esc_html__( 'If checked, APCu Manager will flush all cached objects after core, plugin or theme update (recommended).', 'apcu-manager' ),
+				'description' => esc_html__( 'If checked, APCu Manager will flush all cached objects after core, plugin or theme update. Every page then rebuilds its objects from the database under live traffic; keep it off unless an update changes cached data formats.', 'apcu-manager' ),
 				'full_width'  => false,
 				'enabled'     => $apcu_available,
 			]
