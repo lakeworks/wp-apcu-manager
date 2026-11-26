@@ -83,8 +83,9 @@ class Option {
 		self::$defaults['forceearlyloading'] = true;
 		self::$defaults['adminbar']          = true;
 		self::$defaults['compat']            = true;
+		self::$defaults['autopurge_update']  = true;
 		self::$defaults['maxsize']           = 100;
-		self::$network                       = [ 'forceearlyloading', 'earlyloading', 'compat', 'version', 'schema_version', 'schema_migration_attempts', 'use_cdn', 'use_apcu',  'script_in_footer', 'display_nag', 'analytics', 'history', 'gc', 'metrics', 'adminbar' ];
+		self::$network                       = [ 'forceearlyloading', 'earlyloading', 'compat', 'version', 'schema_version', 'schema_migration_attempts', 'use_cdn', 'use_apcu',  'script_in_footer', 'display_nag', 'analytics', 'history', 'gc', 'metrics', 'adminbar', 'autopurge_update' ];
 	}
 	/**
 	 * Get the options infos for Site Health "info" tab.

@@ -11,7 +11,7 @@
  * Plugin URI:        https://perfops.one/apcu-manager
  * Update URI:        false
  * Description:       APCu statistics and management right in the WordPress admin dashboard.
- * Version:           4.6.1
+ * Version:           4.7.0
  * Requires at least: 6.4
  * Requires PHP:      8.2
  * Author:            Pierre Lannoy / PerfOps One
