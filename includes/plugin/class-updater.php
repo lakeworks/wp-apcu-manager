@@ -50,6 +50,7 @@ class Updater {
 				$this->install();
 				// phpcs:ignore
 				$message = sprintf( esc_html__( '%1$s has been correctly installed.', 'apcu-manager' ), APCM_PRODUCT_NAME );
+				APCu::reset();
 			} else {
 				// phpcs:ignore
 				$message  = sprintf( esc_html__( '%1$s has been correctly updated from version %2$s to version %3$s.', 'apcu-manager' ), APCM_PRODUCT_NAME, $old, APCM_VERSION );
@@ -58,7 +59,10 @@ class Updater {
 				$message .= ' ' . sprintf( __( 'See <a href="%s">what\'s new</a>.', 'apcu-manager' ), admin_url( 'admin.php?page=apcm-settings&tab=about' ) );
 			}
 			Nag::add( 'update', 'info', $message );
-			APCu::reset();
+			// Fork: no APCu::reset() on a version change. It deletes every key under APCU_CACHE_PREFIX, which is
+			// the object cache's own prefix ('_' . md5( ABSPATH ) . '_'), so a plugin update emptied the whole object
+			// cache (operator 2026-11-26: no APCu clear after an update unless there is a good reason). A release
+			// that changes a cached data format must flush deliberately.
 		}
 		// This fork is updated via git only; the PerfOps One self-updater is intentionally disabled.
 	}
